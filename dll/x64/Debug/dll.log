@@ -1,0 +1,10 @@
+﻿  imageprocess.cpp
+C:\Users\17628\Desktop\dll\imageprocess.cpp(53,1): warning C4305:  “初始化”: 从“double”到“float”截断
+C:\Users\17628\Desktop\dll\imageprocess.cpp(58,1): warning C4326:  “main”的返回类型应为“int”而非“void”
+C:\Users\17628\Desktop\dll\imageprocess.cpp(91,54): warning C4244:  “=”: 从“double”转换到“float”，可能丢失数据
+C:\Users\17628\Desktop\dll\imageprocess.cpp(99,50): warning C4244:  “=”: 从“double”转换到“float”，可能丢失数据
+C:\Users\17628\Desktop\dll\imageprocess.cpp(100,74): warning C4244:  “=”: 从“double”转换到“float”，可能丢失数据
+C:\Users\17628\Desktop\dll\imageprocess.cpp(107,50): warning C4244:  “=”: 从“double”转换到“float”，可能丢失数据
+C:\Users\17628\Desktop\dll\imageprocess.cpp(108,74): warning C4244:  “=”: 从“double”转换到“float”，可能丢失数据
+C:\Users\17628\Desktop\dll\imageprocess.cpp(474,7): warning C4101:  “txt”: 未引用的局部变量
+  dll.vcxproj -> C:\Users\17628\Desktop\dll\x64\Debug\dll.dll
