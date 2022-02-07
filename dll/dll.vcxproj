@@ -131,7 +131,9 @@
     <ClCompile Include="stdafx.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="common.h" />
     <ClInclude Include="imageprocess.h" />
+    <ClInclude Include="sensor_process.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="test.h" />
   </ItemGroup>
