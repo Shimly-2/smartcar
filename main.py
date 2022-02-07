@@ -1,5 +1,13 @@
 # -*- coding:utf-8 -*-
+"""
+@ author   YYY
+@ desc     用于17届智能车比赛-平衡单车组上位机开发
+@ date     2022/2/7
+@ file     main.py
+@ version  1.2
+"""
 import time,sys
+from tkinter.font import Font
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
 from PyQt5.QtGui import *
@@ -9,163 +17,136 @@ import cv2
 import os
 import numpy as np
 from ctypes import *
-
+import datetime
 from PIL import Image
+from imageprocess import *
 
+# 加载动态链接库
 mylib = cdll.LoadLibrary(r'C:/Users/17628/Desktop/ui/dll/x64/Debug/dll.dll')
 
-ROAD_MAIN_ROW = 120-40
 
-class StructPointer(Structure):  
-    _fields_ = [("arr_left", c_int * 120), 
-                ("arr_right", c_int * 120)] 
+# 使用起始行120  
+ROAD_START_ROW=115
 
+# 使用结束行10  
+ROAD_END_ROW=10
+
+# 主跑行
+ROAD_MAIN_ROW = 40
+
+# 图像长宽
+MT9V03X_H = 120
+MT9V03X_W = 188
+
+# 图像数组 120*188
+global aa
+aa=[]
+for i in range(120):
+	aa.append([])
+	for j in range(188):
+		aa[i].append(0)
+
+# 边线数组 120*3
+global bb
+bb=[]
+for i in range(120):
+	bb.append([])
+	for j in range(2):
+		bb[i].append(0)
+
+# 滤波后数组 120*188
+global bc
+bc=[]
+for i in range(120):
+	bc.append([])
+	for j in range(188):
+		bc[i].append(0)
+
+# 拐点数组，未用到
+global guai
+guai=[]
+for i in range(4):
+	guai.append([])
+	for j in range(2):
+		guai[i].append(0)
+
+# 边线数组 64*3
+global side
+side=[]
+for i in range(64):
+	side.append([])
+	for j in range(3):
+		side[i].append(0)
+
+# 图像数组 64*188
+global md
+md=[]
+for i in range(64):
+	md.append([])
+	for j in range(188):
+		md[i].append(0)
+
+# 存储二值化调试变量类
+class control_unit(object):
+    #类变量
+    file_name = 'student.txt'
+    def __init__(self):
+        self.sobel_motor = 50   # sobel算子手动调节阈值
+        self.sobel_auto = 10    # sobel算子自动调节像素比
+        self.th = 130           # 固定阈值
+        self.filter = 4         # 滤波效果
+    #保存数据的函数
+    def save_data(self):
+        #1.打开文件
+        f = open(self.file_name,'a',encoding='utf-8')
+        #2.写入数据
+        time = datetime.datetime.now()
+        time1_str = datetime.datetime.strftime(time,'%Y-%m-%d %H:%M:%S')
+        print(time1_str)
+        f.write("------------------")
+        f.write(time1_str)
+        f.write("------------------\n")
+
+        f.write("self.sobel_motor = ")
+        f.write(str(self.sobel_motor))
+        f.write("   # sobel算子手动调节阈值")
+        f.write('\n')
+
+        f.write("self.sobel_auto = ")
+        f.write(str(self.sobel_auto))
+        f.write("    # sobel算子自动调节像素比")
+        f.write('\n')
+
+        f.write("self.th = ")
+        f.write(str(self.th))
+        f.write("           # 固定阈值")
+        f.write('\n')
+
+        f.write("self.filter = ")
+        f.write(str(self.filter))
+        f.write("         # 滤波效果")
+        f.write('\n')
+        
+        f.write("-----------------------------------------------------------\n")
+        #3.关闭文件
+        f.close()
+# 创建对象
+control_unit.file_name = 'control_unit.txt'
+ctr=control_unit()
+
+# 二值化图像参数类
 class config:
 	WIDTH=188							#地图列数
 	HEIGHT=120							#地图行数
 	blockLength=8						#绘制画面时每一个节点方块的边长
 	blockLength2=3						#绘制画面时每一个节点方块的边长
 
-class point:							#点类（每一个唯一坐标只有对应的一个实例）
-	_list=[]							#储存所有的point类实例
-	_tag=True							#标记最新创建的实例是否为_list中的已有的实例，True表示不是已有实例
-	def __new__(cls,x,y):				#重写new方法实现对于同样的坐标只有唯一的一个实例
-		for i in point._list:
-			if i.x==x and i.y==y:
-				point._tag=False
-				return i
-		nt=super(point,cls).__new__(cls)
-		point._list.append(nt)
-		return nt
-	def __init__(self,x,y):
-		if point._tag:
-			self.x=x
-			self.y=y
-			self.father=None
-			self.F=0					#当前点的评分  F=G+H
-			self.G=0					#起点到当前节点所花费的消耗
-			self.cost=0					#父节点到此节点的消耗
-		else:
-			point._tag=True
-	@classmethod
-	def clear(cls):						#clear方法，每次搜索结束后，将所有点数据清除，以便进行下一次搜索的时候点数据不会冲突。
-		point._list=[]
-	def __eq__(self,T):					#重写==运算以便实现point类的in运算
-		if type(self)==type(T):
-			return (self.x,self.y)==(T.x,T.y)
-		else:
-			return False
-	def __str__(self):
-		return'(%d,%d)[F=%d,G=%d,cost=%d][father:(%s)]'%(self.x,self.y,self.F,self.G,self.cost,str((self.father.x,self.father.y)) if self.father!=None else 'null')
-
-class A_Search:							#核心部分，寻路类
-	def __init__(self,arg_start,arg_end,arg_map):
-		self.start=arg_start			#储存此次搜索的开始点
-		self.end=arg_end				#储存此次搜索的目的点
-		self.Map=arg_map				#一个二维数组，为此次搜索的地图引用
-		self.open=[]					#开放列表：储存即将被搜索的节点
-		self.close=[]					#关闭列表：储存已经搜索过的节点
-		self.result=[]					#当计算完成后，将最终得到的路径写入到此属性中
-		self.count=0					#记录此次搜索所搜索过的节点数
-		self.useTime=0					#记录此次搜索花费的时间--在此演示中无意义，因为process方法变成了一个逐步处理的生成器，统计时间无意义。
-										#开始进行初始数据处理
-		self.open.append(arg_start)
-	def cal_F(self,loc):
-		print('计算值：',loc)
-		G=loc.father.G+loc.cost
-		H=self.getEstimate(loc)
-		F=G+H
-		print("F=%d G=%d H=%d"%(F,G,H))
-		return {'G':G,'H':H,'F':F}
-	def F_Min(self):					#搜索open列表中F值最小的点并将其返回，同时判断open列表是否为空，为空则代表搜索失败
-		if len(self.open)<=0:
-			return None
-		t=self.open[0]
-		for i in self.open:
-			if i.F<t.F:
-				t=i
-		return t
-	def getAroundPoint(self,loc):#获取指定点周围所有可通行的点，并将其对应的移动消耗进行赋值。
-		l=[(loc.x,loc.y+1,10),(loc.x+1,loc.y+1,14),(loc.x+1,loc.y,10),(loc.x+1,loc.y-1,14),(loc.x,loc.y-1,10),(loc.x-1,loc.y-1,14),(loc.x-1,loc.y,10),(loc.x-1,loc.y+1,14)]
-		for i in l[::-1]:
-			if i[0]<0 or i[0]>=config.HEIGHT or i[1]<0 or i[1]>=config.WIDTH:
-				l.remove(i)
-		nl=[]
-		for i in l:
-			if self.Map[i[0]][i[1]]==0:
-				nt=point(i[0],i[1])
-				nt.cost=i[2]
-				nl.append(nt)
-		return nl
- 
-	def addToOpen(self,l,father):#此次判断的点周围的可通行点加入到open列表中，如此点已经在open列表中则对其进行判断，如果此次路径得到的F值较之之前的F值更小，则将其父节点更新为此次判断的点，同时更新F、G值。
-		for i in l:
-			if i not in self.open:
-				if i not in self.close:
-					i.father=father
-					self.open.append(i)
-					r=self.cal_F(i)
-					i.G=r['G']
-					i.F=r['F']
-			else:
-				tf=i.father
-				i.father=father
-				r=self.cal_F(i)
-				if i.F>r['F']:
-					i.G=r['G']
-					i.F=r['F']
-					# i.father=father
-				else:
-					i.father=tf
-	def getEstimate(self,loc):#H :从点loc移动到终点的预估花费
-		return (abs(loc.x-self.end.x)+abs(loc.y-self.end.y))*10
-	def DisplayPath(self):#在此演示中无意义
-		print('搜索花费的时间:%.2fs.迭代次数%d,路径长度:%d'%(self.useTime,self.count,len(self.result)))
-		if self.result!=None:
-			for i in self.result:
-				self.Map[i.x][i.y]=8
-			for i in self.Map:
-				for j in i:
-					if j==0:
-						print('%s'%'□',end='')
-					elif j==1:
-						print('%s'%'▽',end='')
-					elif j==8:
-						print('%s'%'★',end='')
-				print('')
-		else:
-			print('搜索失败，无可通行路径')
-	def process(self):#使用yield将process方法变成一个生成器，可以逐步的对搜索过程进行处理并返回关键数据
-		while True:
-			self.count+=1
-			tar=self.F_Min()#先获取open列表中F值最低的点tar
-			print('[debug]',tar)
-			if tar==None:
-				self.result=None
-				self.count=-1
-				break
-			else:
-				aroundP=self.getAroundPoint(tar)#获取tar周围的可用点列表aroundP
-				self.addToOpen(aroundP,tar)#把aroundP加入到open列表中并更新F值以及设定父节点
-				self.open.remove(tar)#将tar从open列表中移除
-				self.close.append(tar)#已经迭代过的节点tar放入close列表中
-				if self.end in self.open:#判断终点是否已经处于open列表中
-					e=self.end
-					self.result.append(e)
-					while True:
-						e=e.father
-						if e==None:
-							break
-						self.result.append(e)
-					yield (tar,self.open,self.close)
-					break
- 
-			# self.repaint()
-			# print('返回')
-			yield (tar,self.open,self.close)
-			#time.sleep(1)#暂停
-
-class board_widget(QMainWindow):#可视化类，pyqt5进行编写。
+# 界面一可视化类，pyqt5进行编写。
+class board_widget(QMainWindow):
+	# 视频播放列表
+	bClose = False
+	fn_list = ["C:/Users/17628/Desktop/ui/test video/慢速版.mp4","C:/Users/17628/Desktop/ui/test video/正常版.mp4"]
+	play_index = 0
 	def __init__(self):
         # 1.初始化：初始化地图数组
 		print('初始化地图...')
@@ -190,54 +171,111 @@ class board_widget(QMainWindow):#可视化类，pyqt5进行编写。
 		self.initUI()
 	def initUI(self):
 		#开始初始化UI部分
-			#创建UI控件
-		self.label_tips=QLabel("<p style='color:green'>使用说明：</p>右键单击格子选定起始点,左键格子选定格子为墙壁或删除墙壁。\n<p style='color:green'>颜色说明：</p>\n黄色代表起点，绿色代表终点，黑色代表墙壁，红色代表待搜索的open列表，灰色代表已搜索过的close列表，蓝色代表当前搜索到的路径",self)
 		self.label_display=QTextEdit("",self)
 		self.button_start=QPushButton("开始巡线",self)
-		self.button_clearSE=QPushButton("重选起始点",self)
 		self.button_clearWall=QPushButton("清空地图墙壁",self)
-		self.button_saveMap=QPushButton("保存地图",self)
-		self.button_loadMap=QPushButton("加载地图",self)
+		self.button_saveMap=QPushButton("一键存参",self)
+		self.button_saveMap.setShortcut("Ctrl+s")
+		self.button_LQ_OTSU=QPushButton("龙邱OTSU",self)
+		self.button_OTSU=QPushButton("OTSU",self)
+		self.button_th_average=QPushButton("平均阈值",self)
+		self.button_sobel_motor=QPushButton("sobel算子 手动阈值",self)
+		self.button_sobel_auto=QPushButton("sobel算子 动态阈值",self)
+		self.button_th_motor=QPushButton("手动调节阈值",self)
+		self.button_filter=QPushButton("图像滤波",self)
 
-		self.label_1=QLabel("全局阈值",self)
-		self.label_2=QLabel("130",self)
+		# 字体类设置
 		font = QtGui.QFont()
 		font.setFamily("Consolas")
 		font.setPointSize(12)
 		font.setBold(False)
 		font.setItalic(False)
 		font.setWeight(3)
+
+		self.label_1=QLabel("全局阈值",self)
+		self.label_2=QLabel("130",self)
 		self.label_2.setFont(font)
+
+		self.label_5=QLabel("sobel手动",self)
+		self.label_6=QLabel("50",self)
+		self.label_6.setFont(font)
+
+		self.label_7=QLabel("sobel自动",self)
+		self.label_8=QLabel("10.0",self)
+		self.label_8.setFont(font)
+
+		self.label_9=QLabel("滤波效果",self)
+		self.label_10=QLabel("4",self)
+		self.label_10.setFont(font)
 
 		self.collec_btn = QPushButton('调试小摩托', self)
 		self.collec_btn.setStyleSheet("QPushButton{background-color: rgb(225, 225, 225);border:2px groove gray;border-radius:10px;padding:2px 4px;border-style: outset;}"
                                            "QPushButton:hover{background-color:rgb(229, 241, 251); color: black;}"
                                            "QPushButton:pressed{background-color:rgb(204, 228, 247);border-style: inset;}")
-		self.collec_btn.move(1600, 10)
+		self.collec_btn.move(1580, 10)
 
 		self.label = QLabel(self)
 		self.label.setText("显示图片")
 		self.label.setFixedSize(188, 120)
-		self.label.move(1600, 100)
+		self.label.move(1630, 50)
 
 		self.label_3 = QLabel(self)
 		self.label_3.setText("OTSU阈值：")
 		self.label_3.setFixedSize(50, 50)
-		self.label_3.move(1830, 120)
+		self.label_3.move(1830, 80)
 
 		self.label_4 = QLabel(self)
 		self.label_4.setText("")
 		self.label_4.setFixedSize(50, 50)
-		self.label_4.move(1850, 160)
+		self.label_4.move(1850, 120)
+
+		self.radioButton = QRadioButton(self)
+		self.radioButton.setText("OTSU")
+		self.radioButton.resize(120,30)
+		self.radioButton.move(1580,630)
+
+		self.radioButton2 = QRadioButton(self)
+		self.radioButton2.setText("龙邱OTSU")
+		self.radioButton2.resize(120,30)
+		self.radioButton2.move(1700,630)
+
+		self.radioButton3 = QRadioButton(self)
+		self.radioButton3.setText("手动阈值")
+		self.radioButton3.resize(120,30)
+		self.radioButton3.move(1820,630)
+
+		self.radioButton4 = QRadioButton(self)
+		self.radioButton4.setText("sobel手动阈值")
+		self.radioButton4.resize(120,30)
+		self.radioButton4.move(1580,660)
+
+		self.radioButton5 = QRadioButton(self)
+		self.radioButton5.setText("sobel自动阈值")
+		self.radioButton5.resize(120,30)
+		self.radioButton5.move(1700,660)
+
+		self.radioButton6 = QRadioButton(self)
+		self.radioButton6.setText("平均阈值")
+		self.radioButton6.resize(120,30)
+		self.radioButton6.move(1820,660)
 
 		self.btn = QPushButton(self)
 		self.btn.setText("打开图片")
-		self.btn.move(1600, 50)
+		self.btn.move(1690, 10)
 		self.btn.setStyleSheet("QPushButton{background-color: rgb(225, 225, 225);border:2px groove gray;border-radius:10px;padding:2px 4px;border-style: outset;}"
                                            "QPushButton:hover{background-color:rgb(229, 241, 251); color: black;}"
                                            "QPushButton:pressed{background-color:rgb(204, 228, 247);border-style: inset;}")
 		self.btn.clicked.connect(self.openimage)
 
+		self.play_video = QPushButton(self)
+		self.play_video.setText("打开视频")
+		self.play_video.move(1800, 10)
+		self.play_video.setStyleSheet("QPushButton{background-color: rgb(225, 225, 225);border:2px groove gray;border-radius:10px;padding:2px 4px;border-style: outset;}"
+                                           "QPushButton:hover{background-color:rgb(229, 241, 251); color: black;}"
+                                           "QPushButton:pressed{background-color:rgb(204, 228, 247);border-style: inset;}")
+		self.play_video.clicked.connect(self.manual_choose)
+
+		# 添加滑动条控件
 		self.horizontalSlider =QSlider(self)
 		self.horizontalSlider.setMaximum(255)
 		self.horizontalSlider.setSingleStep(1)
@@ -248,59 +286,164 @@ class board_widget(QMainWindow):#可视化类，pyqt5进行编写。
 		self.horizontalSlider.setTickInterval(5)#设置刻度间隔
 		self.horizontalSlider.valueChanged.connect(self.valChange)
 
+		self.horizontalSlider2 =QSlider(self)
+		self.horizontalSlider2.setMaximum(255)
+		self.horizontalSlider2.setSingleStep(1)
+		self.horizontalSlider2.setPageStep(1)
+		self.horizontalSlider2.setProperty("value", 50)
+		self.horizontalSlider2.setOrientation(QtCore.Qt.Horizontal)
+		self.horizontalSlider2.setObjectName("horizontalSlider2")
+		self.horizontalSlider2.setTickInterval(5)#设置刻度间隔
+		self.horizontalSlider2.valueChanged.connect(self.valChange2)
+
+		self.horizontalSlider3 =QSlider(self)
+		self.horizontalSlider3.setMaximum(300)
+		self.horizontalSlider3.setSingleStep(0.1)
+		self.horizontalSlider3.setPageStep(0.1)
+		self.horizontalSlider3.setProperty("value", 100.0)
+		self.horizontalSlider3.setOrientation(QtCore.Qt.Horizontal)
+		self.horizontalSlider3.setObjectName("horizontalSlider3")
+		self.horizontalSlider3.setTickInterval(0.1)#设置刻度间隔
+		self.horizontalSlider3.valueChanged.connect(self.valChange3)
+
+		self.horizontalSlider4 =QSlider(self)
+		self.horizontalSlider4.setMaximum(10)
+		self.horizontalSlider4.setSingleStep(1)
+		self.horizontalSlider4.setPageStep(1)
+		self.horizontalSlider4.setProperty("value", 4)
+		self.horizontalSlider4.setOrientation(QtCore.Qt.Horizontal)
+		self.horizontalSlider4.setObjectName("horizontalSlider4")
+		self.horizontalSlider4.setTickInterval(5)#设置刻度间隔
+		self.horizontalSlider4.valueChanged.connect(self.valChange4)
+
 		#设置控件属性
-		self.label_tips.setWordWrap(True)
 		self.label_2.setWordWrap(True)
 		self.label_1.setWordWrap(True)
 		#设置控件样式
 		self.label_display.setStyleSheet("border:2px solid black")
 		self.label_display.setAlignment(Qt.AlignLeft)
 		self.label_display.setAlignment(Qt.AlignTop)
+
 		#设置控件的尺寸和位置
-        
-		self.label_tips.resize(330,400)
 		self.label_2.resize(50,50)
 		self.label_1.resize(50,50)
-		self.horizontalSlider.resize(200,30)
-		self.button_saveMap.resize(120,40)
-		self.button_loadMap.resize(150,40)
-		self.button_start.resize(120,40)
-		self.button_clearSE.resize(150,40)
-		self.button_clearWall.resize(150,40)
+		self.label_5.resize(55,50)
+		self.label_6.resize(50,50)
+		self.label_7.resize(55,50)
+		self.label_8.resize(50,50)
+		self.label_9.resize(50,50)
+		self.label_10.resize(50,50)
+		self.horizontalSlider.resize(200,25)
+		self.horizontalSlider2.resize(200,25)
+		self.horizontalSlider3.resize(200,25)
+		self.horizontalSlider4.resize(200,25)
+		self.button_saveMap.resize(145,30)
+		self.button_LQ_OTSU.resize(145,30)
+		self.button_OTSU.resize(140,30)
+		self.button_th_average.resize(300,30)
+		self.button_sobel_motor.resize(300,30)
+		self.button_sobel_auto.resize(300,30)
+		self.button_th_motor.resize(300,30)
+		self.button_start.resize(300,30)
+		self.button_clearWall.resize(145,30)
+		self.button_filter.resize(300,30)
 		self.label_display.resize(300,120)
- 
-		self.label_2.move(1870,240)
-		self.label_1.move(1590,240)
-		self.horizontalSlider.move(1650,250)
-		self.label_tips.move(90+(config.WIDTH-1)*config.blockLength,200)
-		self.label_display.move(90+(config.WIDTH-1)*config.blockLength,740)
-		self.button_start.move(90+(config.WIDTH-1)*config.blockLength,580)
-		self.button_clearSE.move(230+(config.WIDTH-1)*config.blockLength,580)
-		self.button_clearWall.move(90+(config.WIDTH-1)*config.blockLength,680)
-		self.button_saveMap.move(90+(config.WIDTH-1)*config.blockLength,630)
-		self.button_loadMap.move(230+(config.WIDTH-1)*config.blockLength,630)
-			#给控件绑定事件
+
+		# 设置控件位置
+		self.label_2.move(1860,250)
+		self.label_1.move(1580,250)
+		self.label_5.move(1580,325)
+		self.label_6.move(1860,325)
+		self.label_7.move(1580,400)
+		self.label_8.move(1860,400)
+		self.label_9.move(1580,545)
+		self.label_10.move(1860,545)
+		self.horizontalSlider.move(1640,260)
+		self.horizontalSlider2.move(1640,335)
+		self.horizontalSlider3.move(1640,410)
+		self.horizontalSlider4.move(1640,555)
+		self.label_display.move(1580,785)
+		self.button_start.move(1580,700)
+		self.button_clearWall.move(1580+155,735)
+		self.button_saveMap.move(1580,735)
+		self.button_LQ_OTSU.move(1580+155,480)
+		self.button_OTSU.move(1580,480)
+		self.button_th_average.move(1580,515)
+		self.button_sobel_motor.move(1580,370)
+		self.button_sobel_auto.move(1580,445)
+		self.button_th_motor.move(1580,295)
+		self.button_filter.move(1580,590)
+		
+		#给控件绑定事件
 		self.button_start.clicked.connect(self.button_StartEvent)
-		self.button_clearSE.clicked.connect(self.button_Clear)
 		self.button_clearWall.clicked.connect(self.button_Clear)
 		self.button_saveMap.clicked.connect(self.button_SaveMap)
-		self.button_loadMap.clicked.connect(self.button_LoadMap)
-		#UI初始化完成
+		self.button_LQ_OTSU.clicked.connect(self.button_OTSU_LQ)
+		self.button_OTSU.clicked.connect(self.button_OTSU_)
+		self.button_th_average.clicked.connect(self.button_th_average_)
+		self.button_sobel_motor.clicked.connect(self.button_sobel_motor_)
+		self.button_sobel_auto.clicked.connect(self.button_sobel_auto_)
+		self.button_th_motor.clicked.connect(self.button_th_motor_)
+		self.button_filter.clicked.connect(self.button_filter_)
+
+		# 设置滑动条
+		self.s1 = QSlider(Qt.Horizontal,self)
+		self.s1.setToolTip("滑动条")
+		self.s1.setMinimum(0)#设置最大值
+		self.s1.setMaximum(50)#设置最小值
+		self.s1.setSingleStep(1)#设置间隔
+		self.s1.setValue(0)#设置当前值
+		self.s1.sliderMoved.connect(self.start_drag)
+		self.s1.sliderReleased.connect(self.drag_action)
+		self.s1.setFixedSize(250, 25)
+		self.moving_flag = 0
+		self.stop_flag = 0  # 如果当前为播放值为0,如果当前为暂停值为1
+		self.s1.move(1600,180)
+		# 设置两个标签分别是当前时间和结束时间
+		self.label_start = QLabel("00:00",self)
+		self.label_start.move(1580,195)
+		self.label_start.setFont(font)
+		self.label_end = QLabel("00:00",self)
+		self.label_end.setFont(font)
+		self.label_end.move(1580+188+60,195)
+		# 设置暂停播放和下一个按钮
+		self.stop_button = QPushButton(self)
+		self.stop_button.setIcon(QIcon('C:/Users/17628/Desktop/ui/icon/开始.png'))    # 设置图标
+		self.stop_button.setIconSize(QSize(30,30))
+		self.stop_button.clicked.connect(self.stop_action)
+		self.stop_button.move(1580,220)
+		self.next_button = QPushButton(self)
+		self.next_button.setIcon(QIcon('C:/Users/17628/Desktop/ui/icon/下一个.png'))   # 设置图标
+		self.next_button.setIconSize(QSize(30,30))
+		self.next_button.clicked.connect(self.next_action)
+		self.next_button.move(1580+188+10,220)
+		# UI初始化完成
 		self.setGeometry(0, 0, 1920, 1080)
-		# self.setGeometry(0, 0, 230+(config.WIDTH*config.blockLength-config.blockLength)+200, 130+(config.HEIGHT*config.blockLength-config.blockLength))
-		# self.setMinimumSize(230+(config.WIDTH*config.blockLength-config.blockLength)+200, 130+(config.HEIGHT*config.blockLength-config.blockLength))
-		# self.setMaximumSize(230+(config.WIDTH*config.blockLength-config.blockLength)+200, 130+(config.HEIGHT*config.blockLength-config.blockLength))
+		self.setStyleSheet("background-color:#EDEDF5")   # 设置背景色
 		self.setWindowTitle('小摩托')
 		self.show()
 
+	# 获取滑动条的数值函数	
 	def valChange(self):
 		self.label_2.setNum(self.horizontalSlider.value())
 
+	def valChange2(self):
+		self.label_6.setNum(self.horizontalSlider2.value())
+
+	def valChange3(self):
+		num=self.horizontalSlider3.value()/10
+		self.label_8.setNum(num)
+
+	def valChange4(self):
+		self.label_10.setNum(self.horizontalSlider4.value())
+
+	# 打开资源管理器对话框，输入图片
 	def openimage(self):
 		imgName, imgType = QFileDialog.getOpenFileName(self, "打开图片", "", "*.bmp;;*.jpg;;*.png;;All Files(*)")
 		jpg = QtGui.QPixmap(imgName).scaled(self.label.width(), self.label.height())
-		self.label.setPixmap(jpg)
+		self.label.setPixmap(jpg)  # 将图片加载到label上
 
+	# debug窗口
 	def addDisplayText(self,text):
 		if self.displayFlush:
 			self.label_display.setText(text+'\n')
@@ -308,6 +451,7 @@ class board_widget(QMainWindow):#可视化类，pyqt5进行编写。
 		else:
 			self.label_display.setText(self.label_display.toPlainText()+text+'\n')
 
+	# 此类没啥用
 	def mousePressEvent(self,event):
 		x,y=event.x()-50,event.y()-50
 		x=x//config.blockLength
@@ -328,101 +472,479 @@ class board_widget(QMainWindow):#可视化类，pyqt5进行编写。
 						self.addDisplayText('添加了一个终点:(%d,%d)'%(x,y))
 			self.repaint()
 
+	# 巡线，静态图片调试边线
 	def button_StartEvent(self):
-		imgptr = self.label.pixmap().toImage()
-		ptr = imgptr.constBits()
-		ptr.setsize(imgptr.byteCount())
-		mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
-		mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
-		gray = cv2.cvtColor(mat_img, cv2.COLOR_RGB2GRAY)
-		ret, binary = cv2.threshold(gray, 130, 255, cv2.THRESH_BINARY)
-		frame = np.array(binary, dtype=np.uint8)
-		array = frame.astype(c_uint8)
-
-		a=c_uint8*120*2
-		t=a()
-		mylib.ImageGetSide.restype=c_char_p  
-		t1=mylib.ImageGetSide(array.ctypes.data_as(POINTER(c_uint8)),byref(t))
-		aa=[]
-		m=0
+		# 获取选项框情况
+		type=self.checkRadioButton()
+		global aa,bb,bc,side,md
 		for i in range(120):
-			aa.append([])
 			for j in range(2):
-				aa[i].append(t1[m])
+				bb[i][j]=0	
+		if(type==1):
+			# 获取label上的图像，并进行一些数据转换
+			imgptr = self.label.pixmap().toImage()
+			ptr = imgptr.constBits()
+			ptr.setsize(imgptr.byteCount())
+			mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
+			mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
+			gray = cv2.cvtColor(mat_img, cv2.COLOR_RGB2GRAY)
+
+			# 转化为可以处理的数组
+			frame = np.array(gray, dtype=np.uint8)
+			# 将格式转换为c动态链接库的格式
+			array = frame.astype(c_uint8)
+			# 开辟存储空间
+			a=c_uint8*(120*188+1)
+			# t指针指向存储空间
+			t=a()
+			# 函数的目标输出格式
+			mylib.Get_01_Value.restype=POINTER(c_uint8)
+			# 调用动态链接库函数
+			t1=mylib.Get_01_Value(array.ctypes.data_as(POINTER(c_uint8)),byref(t),4)
+			# 将输出量转化为py中的list，存储在aa中
+			for i in range(120):
+				m=0
+				for j in range(188*i,(i+1)*188):
+					aa[i][m]=t1[j]
+					if(aa[i][m]==1):
+						aa[i][m]=0
+					m=m+1
+			# 在label中显示阈值
+			self.label_4.setText(str(t1[120*188]))
+			# 初始化用于判断边线的数组，存储在md中 64*188
+			m=0
+			for i in range(56,120):
+				d=0
+				for j in range(188):
+					md[m][d]=aa[i][j]
+					d=d+1
 				m=m+1
-		img_list = binary.tolist()
-		for i in range(120):
-			img_list[i][aa[i][0]]=100 #左边线
-			img_list[i][aa[i][1]]=200 #右边线
-			img_list[i][int((aa[i][0]+aa[i][1])/2)]=150 #中线
-		for i in range(188):
-			img_list[ROAD_MAIN_ROW][i]=50 #主跑行
-		with open('C:/Users/17628/Desktop/map2.txt', 'w') as f:
-			f.write(json.dumps(img_list))
-		with open('C:/Users/17628/Desktop/map2.txt','r') as f:
-			self.Map=json.loads(f.read())
-			config.HEIGHT=len(self.Map)
-			config.WIDTH=len(self.Map[0])
-			self.addDisplayText('地图加载成功')
-			self.repaint()
-		self.addDisplayText('开始进行巡线')
+			# 转化为可以处理的数组
+			frame = np.array(md, dtype=np.uint8)
+			# 将格式转换为c动态链接库的格式
+			array = frame.astype(c_uint8)
+			# 开辟存储空间
+			a=c_int8*64*3
+			# t指针指向存储空间
+			t=a()
+			# 函数的目标输出格式
+			mylib.Get_line_LMR.restype=POINTER(c_uint8)
+			# 调用动态链接库函数
+			t1=mylib.Get_line_LMR(array.ctypes.data_as(POINTER(c_uint8)),byref(t))
+			# 将输出量转化为py中的list，存储在side中
+			for i in range(3):
+				m=0
+				for j in range(64*i,(i+1)*64):
+					side[m][i]=t1[j]
+					m=m+1		
+		if(type==2):
+			# 获取label上的图像，并进行一些数据转换
+			imgptr = self.label.pixmap().toImage()
+			ptr = imgptr.constBits()
+			ptr.setsize(imgptr.byteCount())
+			mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
+			mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
+			gray = cv2.cvtColor(mat_img, cv2.COLOR_RGB2GRAY)
 
-	def button_SaveMap(self):
-		path = 'C:/Users/17628/Desktop/'
-		# path = 'E:/智能车竞赛/智能车/考核要求_10_30/软件硬件=金屹阳 1950049/Demo/Demo/'
-		img = cv2.imread(os.path.join(path, '3.BMP'), 0)
-		#cv2.imshow(img)
-		binary = threshold_demo(img)
-		# numpy中ndarray文件转为list
-		img_list = binary.tolist()
-		#print(binary)
-		with open('C:/Users/17628/Desktop/map2.txt', 'w') as f:
-			f.write(json.dumps(img_list))
-			self.addDisplayText('地图保存成功-->map.txt')
-
-	def button_LoadMap(self):
-		try:
+			# 转化为可以处理的数组
+			frame = np.array(gray, dtype=np.uint8)
+			# 将格式转换为c动态链接库的格式
+			array = frame.astype(c_uint8)
+			# 开辟存储空间
+			a=c_uint8*(120*188+1)
+			# t指针指向存储空间
+			t=a()
+			# 函数的目标输出格式
+			mylib.Get_01_Value.restype=POINTER(c_uint8)
+			# 调用动态链接库函数
+			t1=mylib.Get_01_Value(array.ctypes.data_as(POINTER(c_uint8)),byref(t),0)
+			# 将输出量转化为py中的list，存储在aa中
+			for i in range(120):
+				m=0
+				for j in range(188*i,(i+1)*188):
+					aa[i][m]=t1[j]
+					if(aa[i][m]==1):
+						aa[i][m]=0
+					m=m+1
+			# 在label中显示阈值
+			self.label_4.setText(str(t1[120*188]))
+			# 初始化用于判断边线的数组，存储在md中 64*188
+			m=0
+			for i in range(56,120):
+				d=0
+				for j in range(188):
+					md[m][d]=aa[i][j]
+					d=d+1
+				m=m+1
+			# 转化为可以处理的数组
+			frame = np.array(md, dtype=np.uint8)
+			# 将格式转换为c动态链接库的格式
+			array = frame.astype(c_uint8)
+			# 开辟存储空间
+			a=c_int8*64*3
+			# t指针指向存储空间
+			t=a()
+			# 函数的目标输出格式
+			mylib.Get_line_LMR.restype=POINTER(c_uint8)
+			# 调用动态链接库函数
+			t1=mylib.Get_line_LMR(array.ctypes.data_as(POINTER(c_uint8)),byref(t))
+			# 将输出量转化为py中的list，存储在side中
+			for i in range(3):
+				m=0
+				for j in range(64*i,(i+1)*64):
+					side[m][i]=t1[j]
+					m=m+1	
+		if(type==3):
+			# 获取label上的图像，并进行一些数据转换
 			imgptr = self.label.pixmap().toImage()
 			ptr = imgptr.constBits()
 			ptr.setsize(imgptr.byteCount())
 			mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
 			mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
 
-			# TODO
-			# gray = cv2.cvtColor(mat_img, cv2.COLOR_RGB2GRAY)
-			# print(gray)
-			# #将图片数据转换为可处理的整型数据
-			# frame = np.array(gray, dtype=np.uint8)
-			# array = frame.astype(c_uint8)
-			# array = array.tolist()
-			# matrix1 = mat(array)     # mat()函数把数组转化为矩阵
-			# matrix1=np.array(matrix1,dtype=np.uint8)
-			# a=c_uint8*120*188
-			# t=a()
-			# mylib.Get_01_Value.restype=c_char_p  
-			# t1=mylib.Get_01_Value(matrix1.ctypes.data_as(POINTER(c_uint8)),byref(t),0)
-			# aa=[]
-			# m=0
-			# # print(t)
-			# for i in range(120):
-			# 	aa.append([])
-			# 	for j in range(188):
-			# 		aa[i].append(t1[j*i])
-			# 		m=m+1
-
-			# print(aa)
-			# frame = np.array(mat_img, dtype=np.float32)
-			# array = frame.astype(int)
-			# git = frame.astype(int)
-			# th = mylib.Get_01_Value(array.ctypes.data_as(POINTER(c_int)),git.ctypes.data_as(POINTER(c_int)),0)
-			
+			# 固定阈值进行二值化
 			binary = threshold_demo(mat_img,self.horizontalSlider.value())
-			th = mylib.Get_01_Value(mat_img.ctypes.data_as(POINTER(c_int)) , 0) #0:龙邱OTSU，1：平均阈值，4：OTSU
-			self.label_4.setText(str(th))
-			# numpy中ndarray文件转为list
-			img_list = binary.tolist()
+			# 在label中显示阈值
+			self.label_4.setText(str(self.horizontalSlider.value()))
+			# 将输出量转化为py中的list，存储在aa中
+			aa = binary.tolist()
+			# 初始化用于判断边线的数组，存储在md中 64*188
+			m=0
+			for i in range(56,120):
+				d=0
+				for j in range(188):
+					md[m][d]=aa[i][j]
+					d=d+1
+				m=m+1
+			# 转化为可以处理的数组
+			frame = np.array(md, dtype=np.uint8)
+			# 将格式转换为c动态链接库的格式
+			array = frame.astype(c_uint8)
+			# 开辟存储空间
+			a=c_int8*64*3
+			# t指针指向存储空间
+			t=a()
+			# 函数的目标输出格式
+			mylib.Get_line_LMR.restype=POINTER(c_uint8)
+			# 调用动态链接库函数
+			t1=mylib.Get_line_LMR(array.ctypes.data_as(POINTER(c_uint8)),byref(t))
+			# 将输出量转化为py中的list，存储在side中
+			for i in range(3):
+				m=0
+				for j in range(64*i,(i+1)*64):
+					side[m][i]=t1[j]
+					m=m+1	
+		if(type==4):
+			# 获取label上的图像，并进行一些数据转换
+			imgptr = self.label.pixmap().toImage()
+			ptr = imgptr.constBits()
+			ptr.setsize(imgptr.byteCount())
+			mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
+			mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
+			gray = cv2.cvtColor(mat_img, cv2.COLOR_RGB2GRAY)
+
+			#将图片数据转换为可处理的整型数据
+			frame=gray.tolist
+			frame = np.array(gray, dtype=np.float)
+
+			# 为方便调参，调用py编写的函数
+			sobel_motor_py(frame,aa,self.horizontalSlider2.value())
+			# 初始化用于判断边线的数组，存储在md中 64*188
+			m=0
+			for i in range(56,120):
+				d=0
+				for j in range(188):
+					md[m][d]=aa[i][j]
+					d=d+1
+				m=m+1
+			# 转化为可以处理的数组
+			frame = np.array(md, dtype=np.uint8)
+			# 将格式转换为c动态链接库的格式
+			array = frame.astype(c_uint8)
+			# 开辟存储空间
+			a=c_int8*64*3
+			# t指针指向存储空间
+			t=a()
+			# 函数的目标输出格式
+			mylib.Get_line_LMR.restype=POINTER(c_uint8)
+			# 调用动态链接库函数
+			t1=mylib.Get_line_LMR(array.ctypes.data_as(POINTER(c_uint8)),byref(t))
+			# 将输出量转化为py中的list，存储在side中
+			for i in range(3):
+				m=0
+				for j in range(64*i,(i+1)*64):
+					side[m][i]=t1[j]
+					m=m+1	
+		if(type==5):
+			# 获取label上的图像，并进行一些数据转换
+			imgptr = self.label.pixmap().toImage()
+			ptr = imgptr.constBits()
+			ptr.setsize(imgptr.byteCount())
+			mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
+			mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
+			gray = cv2.cvtColor(mat_img, cv2.COLOR_RGB2GRAY)
+
+			# 将图片数据转换为可处理的整型数据
+			frame=gray.tolist
+			frame = np.array(gray, dtype=np.float)
+			# 为方便调参，调用py编写的函数
+			sobel_auto_py(frame,aa,self.horizontalSlider3.value()/10)
+			# 初始化用于判断边线的数组，存储在md中 64*188
+			m=0
+			for i in range(56,120):
+				d=0
+				for j in range(188):
+					md[m][d]=aa[i][j]
+					d=d+1
+				m=m+1
+			# 转化为可以处理的数组
+			frame = np.array(md, dtype=np.uint8)
+			# 将格式转换为c动态链接库的格式
+			array = frame.astype(c_uint8)
+			# 开辟存储空间
+			a=c_int8*64*3
+			# t指针指向存储空间
+			t=a()
+			# 函数的目标输出格式
+			mylib.Get_line_LMR.restype=POINTER(c_uint8)
+			# 调用动态链接库函数
+			t1=mylib.Get_line_LMR(array.ctypes.data_as(POINTER(c_uint8)),byref(t))
+			# 将输出量转化为py中的list，存储在side中
+			for i in range(3):
+				m=0
+				for j in range(64*i,(i+1)*64):
+					side[m][i]=t1[j]
+					m=m+1		
+		if(type==6):
+			# 获取label上的图像，并进行一些数据转换
+			imgptr = self.label.pixmap().toImage()
+			ptr = imgptr.constBits()
+			ptr.setsize(imgptr.byteCount())
+			mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
+			mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
+			gray = cv2.cvtColor(mat_img, cv2.COLOR_RGB2GRAY)
+
+			#将图片数据转换为可处理的整型数据
+			frame = np.array(gray, dtype=np.uint8)
+			# 将格式转换为c动态链接库的格式
+			array = frame.astype(c_uint8)
+			# 开辟存储空间
+			a=c_uint8*(120*188+1)
+			# t指针指向存储空间
+			t=a()
+			# 函数的目标输出格式
+			mylib.Get_01_Value.restype=POINTER(c_uint8)
+			# 调用动态链接库函数
+			t1=mylib.Get_01_Value(array.ctypes.data_as(POINTER(c_uint8)),byref(t),1)
+			# 将输出量转化为py中的list，存储在aa中
+			for i in range(120):
+				m=0
+				for j in range(188*i,(i+1)*188):
+					aa[i][m]=t1[j]
+					m=m+1
+			# 在label中显示阈值
+			self.label_4.setText(str(t1[120*188]))
+			# 初始化用于判断边线的数组，存储在md中 64*188
+			m=0
+			for i in range(56,120):
+				d=0
+				for j in range(188):
+					md[m][d]=aa[i][j]
+					d=d+1
+				m=m+1
+			# 转化为可以处理的数组
+			frame = np.array(md, dtype=np.uint8)
+			# 将格式转换为c动态链接库的格式
+			array = frame.astype(c_uint8)
+			# 开辟存储空间
+			a=c_int8*64*3
+			# t指针指向存储空间
+			t=a()
+			# 函数的目标输出格式
+			mylib.Get_line_LMR.restype=POINTER(c_uint8)
+			# 调用动态链接库函数
+			t1=mylib.Get_line_LMR(array.ctypes.data_as(POINTER(c_uint8)),byref(t))
+			# 将输出量转化为py中的list，存储在side中
+			for i in range(3):
+				m=0
+				for j in range(64*i,(i+1)*64):
+					side[m][i]=t1[j]
+					m=m+1	
+		# 滤波，未开启
+		# filter_py(aa,bc,self.horizontalSlider4.value()*255)
+		# bc,bb=ImageGetSide(bc,bb)
+        
+		# 输出信息到绘图区
+		dk=56
+		# 二值化图像
+		for i in range(64):
+			for j in range(188):
+				self.Map[i][j]=aa[i][j]
+		for i in range(64):
+			for j in range(188):
+				md[i][j]=aa[dk][j]
+			dk=dk+1
+		# 边线信息
+		for i in range(64):
+			md[i][side[i][0]]=100 #左边线
+			md[i][side[i][2]]=200 #右边线
+			md[i][side[i][1]]=150 #中线
+		for i in range(188):
+			md[ROAD_MAIN_ROW][i]=50 #主跑行
+		zz=0
+		dd=0
+		for i in range(56,120):
+			dd=0
+			for j in range(188):
+				self.Map[i][j]=md[zz][dd]
+				dd=dd+1
+			zz=zz+1
+		config.HEIGHT=len(self.Map)
+		config.WIDTH=len(self.Map[0])
+		self.repaint()
+		self.addDisplayText('开始边线规划')
+
+	# 数据保存，可用快捷键ctrl+s
+	def button_SaveMap(self):
+		# 获取目前的参数值
+		ctr.th=self.horizontalSlider.value()
+		ctr.sobel_motor=self.horizontalSlider2.value()
+		ctr.sobel_auto=self.horizontalSlider3.value()/10
+		ctr.filter=self.horizontalSlider4.value()
+		# 保存参数
+		ctr.save_data()
+		# 获取当前时间戳
+		time = datetime.datetime.now()
+		time1_str = datetime.datetime.strftime(time,'%Y-%m-%d %H:%M:%S')
+		self.addDisplayText('参数保存成功,%s'%time1_str)
+
+	# OTSU二值化
+	def button_OTSU_(self):
+		try:
+			imgptr = self.label.pixmap().toImage()
+			ptr = imgptr.constBits()
+			ptr.setsize(imgptr.byteCount())
+			mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
+			mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
+			gray = cv2.cvtColor(mat_img, cv2.COLOR_RGB2GRAY)
+			#将图片数据转换为可处理的整型数据
+			frame = np.array(gray, dtype=np.uint8)
+			array = frame.astype(c_uint8)
+			a=c_uint8*(120*188+1)
+			t=a()
+			mylib.Get_01_Value.restype=POINTER(c_uint8)
+			t1=mylib.Get_01_Value(array.ctypes.data_as(POINTER(c_uint8)),byref(t),4)
+			for i in range(120):
+				m=0
+				for j in range(188*i,(i+1)*188):
+					aa[i][m]=t1[j]
+					m=m+1
+			self.label_4.setText(str(t1[120*188]))
 			with open('C:/Users/17628/Desktop/map2.txt', 'w') as f:
-				f.write(json.dumps(img_list))
+				f.write(json.dumps(aa))
+			with open('C:/Users/17628/Desktop/map2.txt','r') as f:
+				self.Map=json.loads(f.read())
+				config.HEIGHT=len(self.Map)
+				config.WIDTH=len(self.Map[0])
+				self.addDisplayText('OTSU')
+				self.repaint()
+		except Exception as e:
+			print('失败',e,type(e))
+			if type(e)==FileNotFoundError:
+				self.addDisplayText('地图加载失败:地图文件不存在')
+			elif type(e)==json.decoder.JSONDecodeError:
+				self.addDisplayText('地图加载失败:错误的地图文件')
+
+	# 平均阈值二值化
+	def button_th_average_(self):
+		try:
+			imgptr = self.label.pixmap().toImage()
+			ptr = imgptr.constBits()
+			ptr.setsize(imgptr.byteCount())
+			mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
+			mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
+			gray = cv2.cvtColor(mat_img, cv2.COLOR_RGB2GRAY)
+			#将图片数据转换为可处理的整型数据
+			frame = np.array(gray, dtype=np.uint8)
+			array = frame.astype(c_uint8)
+			a=c_uint8*(120*188+1)
+			t=a()
+			mylib.Get_01_Value.restype=POINTER(c_uint8)
+			t1=mylib.Get_01_Value(array.ctypes.data_as(POINTER(c_uint8)),byref(t),1)
+			for i in range(120):
+				m=0
+				for j in range(188*i,(i+1)*188):
+					aa[i][m]=t1[j]
+					m=m+1
+			self.label_4.setText(str(t1[120*188]))
+			with open('C:/Users/17628/Desktop/map2.txt', 'w') as f:
+				f.write(json.dumps(aa))
+			with open('C:/Users/17628/Desktop/map2.txt','r') as f:
+				self.Map=json.loads(f.read())
+				config.HEIGHT=len(self.Map)
+				config.WIDTH=len(self.Map[0])
+				self.addDisplayText('平均阈值')
+				self.repaint()
+		except Exception as e:
+			print('失败',e,type(e))
+			if type(e)==FileNotFoundError:
+				self.addDisplayText('地图加载失败:地图文件不存在')
+			elif type(e)==json.decoder.JSONDecodeError:
+				self.addDisplayText('地图加载失败:错误的地图文件')
+
+	# sobel手动阈值二值化
+	def button_sobel_motor_(self):
+		try:
+			# 为了方便gui调参用python写了一遍
+			imgptr = self.label.pixmap().toImage()
+			ptr = imgptr.constBits()
+			ptr.setsize(imgptr.byteCount())
+			mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
+			mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
+			gray = cv2.cvtColor(mat_img, cv2.COLOR_RGB2GRAY)
+			#将图片数据转换为可处理的整型数据
+			frame=gray.tolist
+			frame = np.array(gray, dtype=np.float)
+			sobel_motor_py(frame,aa,self.horizontalSlider2.value())
+			with open('C:/Users/17628/Desktop/map2.txt', 'w') as f:
+				f.write(json.dumps(aa))
+			with open('C:/Users/17628/Desktop/map2.txt','r') as f:
+				self.Map=json.loads(f.read())
+				config.HEIGHT=len(self.Map)
+				config.WIDTH=len(self.Map[0])
+				self.addDisplayText('sobel算子手动阈值')
+				self.repaint()
+		except Exception as e:
+			print('失败',e,type(e))
+			if type(e)==FileNotFoundError:
+				self.addDisplayText('地图加载失败:地图文件不存在')
+			elif type(e)==json.decoder.JSONDecodeError:
+				self.addDisplayText('地图加载失败:错误的地图文件')
+			# c动态链接库直接导入函数求解
+			'''
+			imgptr = self.label.pixmap().toImage()
+			ptr = imgptr.constBits()
+			ptr.setsize(imgptr.byteCount())
+			mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
+			mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
+			gray = cv2.cvtColor(mat_img, cv2.COLOR_RGB2GRAY)
+			#将图片数据转换为可处理的整型数据
+			frame = np.array(gray, dtype=np.uint8)
+			array = frame.astype(c_uint8)
+			a=c_uint8*(120*188+1)
+			t=a()
+			mylib.Get_01_Value.restype=POINTER(c_uint8)
+			t1=mylib.Get_01_Value(array.ctypes.data_as(POINTER(c_uint8)),byref(t),2)
+			aa=[]
+			m=0
+			for i in range(120):
+				aa.append([])
+				for j in range(188*i,(i+1)*188):
+					aa[i].append(t1[j])
+					m=m+1
+			self.label_4.setText(str(t1[120*188]))
+			with open('C:/Users/17628/Desktop/map2.txt', 'w') as f:
+				f.write(json.dumps(aa))
 			with open('C:/Users/17628/Desktop/map2.txt','r') as f:
 				self.Map=json.loads(f.read())
 				config.HEIGHT=len(self.Map)
@@ -435,7 +957,153 @@ class board_widget(QMainWindow):#可视化类，pyqt5进行编写。
 				self.addDisplayText('地图加载失败:地图文件不存在')
 			elif type(e)==json.decoder.JSONDecodeError:
 				self.addDisplayText('地图加载失败:错误的地图文件')
+				'''
+
+	# sobel自动阈值二值化
+	def button_sobel_auto_(self):
+		try:
+			# 为了方便gui调参用python写了一遍
+			imgptr = self.label.pixmap().toImage()
+			ptr = imgptr.constBits()
+			ptr.setsize(imgptr.byteCount())
+			mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
+			mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
+			gray = cv2.cvtColor(mat_img, cv2.COLOR_RGB2GRAY)
+			#将图片数据转换为可处理的整型数据
+			frame=gray.tolist
+			frame = np.array(gray, dtype=np.float)
+			sobel_auto_py(frame,aa,self.horizontalSlider3.value()/10)
+			with open('C:/Users/17628/Desktop/map2.txt', 'w') as f:
+				f.write(json.dumps(aa))
+			with open('C:/Users/17628/Desktop/map2.txt','r') as f:
+				self.Map=json.loads(f.read())
+				config.HEIGHT=len(self.Map)
+				config.WIDTH=len(self.Map[0])
+				self.addDisplayText('sobel算子自动阈值')
+				self.repaint()
+		except Exception as e:
+			print('失败',e,type(e))
+			if type(e)==FileNotFoundError:
+				self.addDisplayText('地图加载失败:地图文件不存在')
+			elif type(e)==json.decoder.JSONDecodeError:
+				self.addDisplayText('地图加载失败:错误的地图文件')
+			# c动态链接库直接导入函数求解
+			'''
+			imgptr = self.label.pixmap().toImage()
+			ptr = imgptr.constBits()
+			ptr.setsize(imgptr.byteCount())
+			mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
+			mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
+			gray = cv2.cvtColor(mat_img, cv2.COLOR_RGB2GRAY)
+			#将图片数据转换为可处理的整型数据
+			frame = np.array(gray, dtype=np.uint8)
+			array = frame.astype(c_uint8)
+			a=c_uint8*(120*188+1)
+			t=a()
+			mylib.Get_01_Value.restype=POINTER(c_uint8)
+			t1=mylib.Get_01_Value(array.ctypes.data_as(POINTER(c_uint8)),byref(t),3)
+			aa=[]
+			m=0
+			for i in range(120):
+				aa.append([])
+				for j in range(188*i,(i+1)*188):
+					aa[i].append(t1[j])
+					m=m+1
+			self.label_4.setText(str(t1[120*188]))
+			with open('C:/Users/17628/Desktop/map2.txt', 'w') as f:
+				f.write(json.dumps(aa))
+			with open('C:/Users/17628/Desktop/map2.txt','r') as f:
+				self.Map=json.loads(f.read())
+				config.HEIGHT=len(self.Map)
+				config.WIDTH=len(self.Map[0])
+				self.addDisplayText('地图加载成功')
+				self.repaint()
+		except Exception as e:
+			print('失败',e,type(e))
+			if type(e)==FileNotFoundError:
+				self.addDisplayText('地图加载失败:地图文件不存在')
+			elif type(e)==json.decoder.JSONDecodeError:
+				self.addDisplayText('地图加载失败:错误的地图文件')
+				'''
+
+	# 龙邱OTSU二值化
+	def button_OTSU_LQ(self):
+		try:
+			imgptr = self.label.pixmap().toImage()
+			ptr = imgptr.constBits()
+			ptr.setsize(imgptr.byteCount())
+			mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
+			mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
+			gray = cv2.cvtColor(mat_img, cv2.COLOR_RGB2GRAY)
+			#将图片数据转换为可处理的整型数据
+			frame = np.array(gray, dtype=np.uint8)
+			array = frame.astype(c_uint8)
+			a=c_uint8*(120*188+1)
+			t=a()
+			mylib.Get_01_Value.restype=POINTER(c_uint8)
+			t1=mylib.Get_01_Value(array.ctypes.data_as(POINTER(c_uint8)),byref(t),0)
+			for i in range(120):
+				m=0
+				for j in range(188*i,(i+1)*188):
+					aa[i][m]=t1[j]
+					m=m+1
+			self.label_4.setText(str(t1[120*188]))
+			with open('C:/Users/17628/Desktop/map2.txt', 'w') as f:
+				f.write(json.dumps(aa))
+			with open('C:/Users/17628/Desktop/map2.txt','r') as f:
+				self.Map=json.loads(f.read())
+				config.HEIGHT=len(self.Map)
+				config.WIDTH=len(self.Map[0])
+				self.addDisplayText('龙邱OTSU')
+				self.repaint()
+		except Exception as e:
+			print('失败',e,type(e))
+			if type(e)==FileNotFoundError:
+				self.addDisplayText('地图加载失败:地图文件不存在')
+			elif type(e)==json.decoder.JSONDecodeError:
+				self.addDisplayText('地图加载失败:错误的地图文件')
+
+	# 固定阈值二值化
+	def button_th_motor_(self):
+		try:
+			imgptr = self.label.pixmap().toImage()
+			ptr = imgptr.constBits()
+			ptr.setsize(imgptr.byteCount())
+			mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
+			mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
+			binary = threshold_demo(mat_img,self.horizontalSlider.value())
+			self.label_4.setText(str(self.horizontalSlider.value()))
+			# numpy中ndarray文件转为list
+			img_list = binary.tolist()
+			with open('C:/Users/17628/Desktop/map2.txt', 'w') as f:
+				f.write(json.dumps(img_list))
+			with open('C:/Users/17628/Desktop/map2.txt','r') as f:
+				self.Map=json.loads(f.read())
+				config.HEIGHT=len(self.Map)
+				config.WIDTH=len(self.Map[0])
+				self.addDisplayText('手动阈值')
+				self.repaint()
+		except Exception as e:
+			print('失败',e,type(e))
+			if type(e)==FileNotFoundError:
+				self.addDisplayText('地图加载失败:地图文件不存在')
+			elif type(e)==json.decoder.JSONDecodeError:
+				self.addDisplayText('地图加载失败:错误的地图文件')
+
+	# 图像滤波
+	def button_filter_(self):
+		# 为方便调参，调用py编写的函数
+		filter_py(aa,bc,self.horizontalSlider4.value()*255)
+		with open('C:/Users/17628/Desktop/map2.txt', 'w') as f:
+			f.write(json.dumps(bc))
+		with open('C:/Users/17628/Desktop/map2.txt','r') as f:
+			self.Map=json.loads(f.read())
+			config.HEIGHT=len(self.Map)
+			config.WIDTH=len(self.Map[0])
+			self.addDisplayText('进行滤波')
+			self.repaint()
 	
+	# 绘图区清除
 	def button_Clear(self):
 		sender=self.sender()
 		print(self.button_clearSE,type(self.button_clearSE))
@@ -449,16 +1117,20 @@ class board_widget(QMainWindow):#可视化类，pyqt5进行编写。
 				for j in range(len(self.Map[i])):
 					self.Map[i][j]=0
 			self.repaint()
-			self.addDisplayText('清空所有墙壁')
+			self.addDisplayText('清空所有图像')
 	
+	# 重写绘图类
 	def paintEvent(self, event):
 		qp = QPainter()
 		qp.begin(self)
 		self.drawBoard(event,qp)
 		qp.end()
     
+	# 重写绘图类
 	def drawBoard(self, event, qp):
 		self.drawMap(qp)
+
+	# 绘图区颜色设置
 	def drawMap(self,qp):#画面绘制方法，每次地图有所改动都将重绘
 		time1=time.time()
 		if self.search!=None:
@@ -480,23 +1152,23 @@ class board_widget(QMainWindow):#可视化类，pyqt5进行编写。
 			for i in range(len(self.Map)):
 				for j in range(len(self.Map[i])):
 					wordTag=False
-					if i==self.search.start.x and j==self.search.start.y:   #起始点颜色
+					if i==self.search.start.x and j==self.search.start.y:   # 起始点颜色
 						qp.setBrush(QColor(255,255,0))
-					elif i==self.search.end.x and j==self.search.end.y:     #终止点颜色
+					elif i==self.search.end.x and j==self.search.end.y:     # 终止点颜色
 						qp.setBrush(QColor(100,200,50))
 					else:
-						if self.Map[i][j]==255:                               #非障碍物颜色
+						if self.Map[i][j]==255:                             # 非障碍物颜色
 							qp.setBrush(QColor(255, 255, 255))
 						elif self.Map[i][j]==1 or self.Map[i][j]==0:                               #障碍物颜色
 							qp.setBrush(QColor(0,0,0))
-						elif self.Map[i][j]==100:                           #左边线
+						elif self.Map[i][j]==100:                           # 左边线
 							qp.setBrush(QColor(255,0,0))
-						elif self.Map[i][j]==200:                           #右边线
+						elif self.Map[i][j]==200:                           # 右边线
 							qp.setBrush(QColor(0,255,0))
-						elif self.Map[i][j]==150:                           #中线
+						elif self.Map[i][j]==150:                           # 中线
 							qp.setBrush(QColor(0,0,255))
 						else:
-							qp.setBrush(QColor(220,220,220))
+							qp.setBrush(QColor(200,200,230))
 					qp.drawRect(30+j*config.blockLength,30+i*config.blockLength,config.blockLength,config.blockLength)
 					if wordTag:
 						qp.setFont(QFont('楷体',5,QFont.Light))
@@ -515,21 +1187,23 @@ class board_widget(QMainWindow):#可视化类，pyqt5进行编写。
 							qp.setBrush(QColor(255,255,255))
 						elif self.Map[i][j]==1 or self.Map[i][j]==0:
 							qp.setBrush(QColor(0,0,0))
-						elif self.Map[i][j]==100:                           #左边线
+						elif self.Map[i][j]==100:                           # 左边线
 							qp.setBrush(QColor(255,0,0))
-						elif self.Map[i][j]==200:                           #右边线
+						elif self.Map[i][j]==200:                           # 右边线
 							qp.setBrush(QColor(0,255,0))
-						elif self.Map[i][j]==150:                           #中线
+						elif self.Map[i][j]==150:                           # 中线
 							qp.setBrush(QColor(0,0,255))
-						elif self.Map[i][j]==50:                           #主跑行
+						elif self.Map[i][j]==50:                            # 主跑行
 							qp.setBrush(QColor(162,20,203))
+						elif self.Map[i][j]==90:                            # 跳变点
+							qp.setBrush(QColor(4,211,252))
 						else:
-							qp.setBrush(QColor(220,220,220))
+							qp.setBrush(QColor(200,200,230))
 
 					qp.drawRect(30+j*config.blockLength,30+i*config.blockLength,config.blockLength,config.blockLength)
 		time2=time.time()
-	#time.sleep(20)
-		# print('绘制时间：',time2-time1)
+
+	# 未用到
 	def timerEvent(self,e):
 		try:
 			data=next(self.yi)
@@ -555,223 +1229,1006 @@ class board_widget(QMainWindow):#可视化类，pyqt5进行编写。
 			self.special=data
 			self.repaint()
 
-class WinForm(QGraphicsView,QMainWindow):
-    def __init__(self, parent=None):
-        super(WinForm, self).__init__(parent)
-        self.setWindowTitle('rotation animation')  # 设置窗口标题
-        self.setWindowTitle("rotation animation")
-        self.setGeometry(0, 0, 1920, 1080)  # 窗口整体窗口位置大小
+	# 定义将opencv图像转PyQt图像的函数
+	def cvImgtoQtImg(self,cvImg):
+		QtImgBuf = cv2.cvtColor(cvImg, cv2.COLOR_BGR2BGRA)
+		QtImg = QtGui.QImage(QtImgBuf.data, QtImgBuf.shape[1], QtImgBuf.shape[0],QtGui.QImage.Format_RGB32)
+		return QtImg
 
-        quit = QPushButton('click', self)  # button 对象
-        quit.setGeometry(10, 10, 60, 35)  # 设置按钮的位置 和 大小
-        quit.setStyleSheet("background-color: red")  # 设置按钮的风格和颜色
-        quit.clicked.connect(self.clickbutton)  # 点击按钮之后关闭窗口
+	# 选项框警告
+	def checkRadioButton(self):
+		if self.radioButton.isChecked():
+			type = 1
+		if self.radioButton2.isChecked():
+			type = 2
+		if self.radioButton3.isChecked():
+			type = 3
+		if self.radioButton4.isChecked():
+			type = 4
+		if self.radioButton5.isChecked():
+			type = 5
+		if self.radioButton6.isChecked():
+			type = 6
+		if not self.radioButton.isChecked() and not self.radioButton2.isChecked() and not self.radioButton3.isChecked() and not self.radioButton4.isChecked() and not self.radioButton5.isChecked() and not self.radioButton6.isChecked():
+			QMessageBox.information(self, "消息框标题", "请选择一种方法", QMessageBox.Yes | QMessageBox.No)
+			type=1
+		return type
 
-        self.scene = QGraphicsScene(self)
-        self.scene.setSceneRect(0, 0, 1920, 1080)  # 动画 位置 这个需计算
-        # 理论转角区
-        self.rota = Rotation()
-        self.scene.addItem(self.rota.car_back_item)
+	# 播放视频进行二值化调试，与图片的思路基本一致
+	def playVideoFile(self,fn):
+		# 获取选项框type
+		type=self.checkRadioButton()
+		self.cap = cv2.VideoCapture(fn)
+		# 设置滚动条对应的帧
+		frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+		self.settingSlider(frames)
+		# 帧数
+		fps = 24
+		self.loop_flag = 0
+		if not self.cap.isOpened():
+			print("Cannot open Video File")
+			exit()
+		while not self.bClose:
+			# 逐帧读取影片
+			ret, frame = self.cap.read()
+			if not ret:
+				if frame is None:
+					print("The video has end.")
+				else:
+					print("Read video error!")
+				break
+			if self.moving_flag==0:
+				# 设置时间
+				self.label_start.setText(self.int2time(self.loop_flag))
+				self.s1.setValue(int(self.loop_flag/fps))#设置当前值
+			self.loop_flag += 1
+			# 将cv2读取的图像显示在label中
+			QtImg = self.cvImgtoQtImg(frame)
+			self.label.setPixmap(QtGui.QPixmap.fromImage(QtImg).scaled(self.label.size()))
+			self.label.show()  # 刷新界面
+			global aa,bb,bc,side,md
+			# 视频和图片的处理手法一致
+			if(type==1):
+				# 获取label上的图像，并进行一些数据转换
+				imgptr = self.label.pixmap().toImage()
+				ptr = imgptr.constBits()
+				ptr.setsize(imgptr.byteCount())
+				mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
+				mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
+				gray = cv2.cvtColor(mat_img, cv2.COLOR_RGB2GRAY)
+				frame = np.array(gray, dtype=np.uint8)
+				array = frame.astype(c_uint8)
+				a=c_uint8*(120*188+1)
+				t=a()
+				mylib.Get_01_Value.restype=POINTER(c_uint8)
+				t1=mylib.Get_01_Value(array.ctypes.data_as(POINTER(c_uint8)),byref(t),4)
+				for i in range(120):
+					m=0
+					for j in range(188*i,(i+1)*188):
+						aa[i][m]=t1[j]
+						if(aa[i][m]==1):
+							aa[i][m]=0
+						m=m+1
+				self.label_4.setText(str(t1[120*188]))
+				m=0
+				for i in range(56,120):
+					d=0
+					for j in range(188):
+						md[m][d]=aa[i][j]
+						d=d+1
+					m=m+1
+				frame = np.array(md, dtype=np.uint8)
+				array = frame.astype(c_uint8)
+				a=c_int8*64*3
+				t=a()
+				mylib.Get_line_LMR.restype=POINTER(c_uint8)
+				t1=mylib.Get_line_LMR(array.ctypes.data_as(POINTER(c_uint8)),byref(t))
+				for i in range(3):
+					m=0
+					for j in range(64*i,(i+1)*64):
+						side[m][i]=t1[j]
+						m=m+1	
+			if(type==2):
+				imgptr = self.label.pixmap().toImage()
+				ptr = imgptr.constBits()
+				ptr.setsize(imgptr.byteCount())
+				mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
+				mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
+				gray = cv2.cvtColor(mat_img, cv2.COLOR_RGB2GRAY)
+				frame = np.array(gray, dtype=np.uint8)
+				array = frame.astype(c_uint8)
+				a=c_uint8*(120*188+1)
+				t=a()
+				mylib.Get_01_Value.restype=POINTER(c_uint8)
+				t1=mylib.Get_01_Value(array.ctypes.data_as(POINTER(c_uint8)),byref(t),0)
+				for i in range(120):
+					m=0
+					for j in range(188*i,(i+1)*188):
+						aa[i][m]=t1[j]
+						if(aa[i][m]==1):
+							aa[i][m]=0
+						m=m+1
+				self.label_4.setText(str(t1[120*188]))
+				m=0
+				for i in range(56,120):
+					d=0
+					for j in range(188):
+						md[m][d]=aa[i][j]
+						d=d+1
+					m=m+1
+				frame = np.array(md, dtype=np.uint8)
+				array = frame.astype(c_uint8)
+				a=c_int8*64*3
+				t=a()
+				mylib.Get_line_LMR.restype=POINTER(c_uint8)
+				t1=mylib.Get_line_LMR(array.ctypes.data_as(POINTER(c_uint8)),byref(t))
+				for i in range(3):
+					m=0
+					for j in range(64*i,(i+1)*64):
+						side[m][i]=t1[j]
+						m=m+1
+			if(type==3):
+				imgptr = self.label.pixmap().toImage()
+				ptr = imgptr.constBits()
+				ptr.setsize(imgptr.byteCount())
+				mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
+				mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
+				binary = threshold_demo(mat_img,self.horizontalSlider.value())
+				self.label_4.setText(str(self.horizontalSlider.value()))
+				aa = binary.tolist()
+				m=0
+				for i in range(56,120):
+					d=0
+					for j in range(188):
+						md[m][d]=aa[i][j]
+						d=d+1
+					m=m+1
+				frame = np.array(md, dtype=np.uint8)
+				array = frame.astype(c_uint8)
+				a=c_int8*64*3
+				t=a()
+				mylib.Get_line_LMR.restype=POINTER(c_uint8)
+				t1=mylib.Get_line_LMR(array.ctypes.data_as(POINTER(c_uint8)),byref(t))
+				
+				for i in range(3):
+					m=0
+					for j in range(64*i,(i+1)*64):
+						side[m][i]=t1[j]
+						m=m+1	
+			if(type==4):
+				imgptr = self.label.pixmap().toImage()
+				ptr = imgptr.constBits()
+				ptr.setsize(imgptr.byteCount())
+				mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
+				mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
+				gray = cv2.cvtColor(mat_img, cv2.COLOR_RGB2GRAY)
+				#将图片数据转换为可处理的整型数据
+				frame=gray.tolist
+				frame = np.array(gray, dtype=np.float)
+				sobel_motor_py(frame,aa,self.horizontalSlider2.value())
+				m=0
+				for i in range(56,120):
+					d=0
+					for j in range(188):
+						md[m][d]=aa[i][j]
+						d=d+1
+					m=m+1
+				frame = np.array(md, dtype=np.uint8)
+				array = frame.astype(c_uint8)
+				a=c_int8*64*3
+				t=a()
+				mylib.Get_line_LMR.restype=POINTER(c_uint8)
+				t1=mylib.Get_line_LMR(array.ctypes.data_as(POINTER(c_uint8)),byref(t))
+				
+				for i in range(3):
+					m=0
+					for j in range(64*i,(i+1)*64):
+						side[m][i]=t1[j]
+						m=m+1	
+			if(type==5):
+				imgptr = self.label.pixmap().toImage()
+				ptr = imgptr.constBits()
+				ptr.setsize(imgptr.byteCount())
+				mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
+				mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
+				gray = cv2.cvtColor(mat_img, cv2.COLOR_RGB2GRAY)
+				frame=gray.tolist
+				frame = np.array(gray, dtype=np.float)
+				sobel_auto_py(frame,aa,self.horizontalSlider3.value()/10)
+				m=0
+				for i in range(56,120):
+					d=0
+					for j in range(188):
+						md[m][d]=aa[i][j]
+						d=d+1
+					m=m+1
+				frame = np.array(md, dtype=np.uint8)
+				array = frame.astype(c_uint8)
+				a=c_int8*64*3
+				t=a()
+				mylib.Get_line_LMR.restype=POINTER(c_uint8)
+				t1=mylib.Get_line_LMR(array.ctypes.data_as(POINTER(c_uint8)),byref(t))
+				
+				for i in range(3):
+					m=0
+					for j in range(64*i,(i+1)*64):
+						side[m][i]=t1[j]
+						m=m+1		
+			if(type==6):
+				imgptr = self.label.pixmap().toImage()
+				ptr = imgptr.constBits()
+				ptr.setsize(imgptr.byteCount())
+				mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
+				mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
+				gray = cv2.cvtColor(mat_img, cv2.COLOR_RGB2GRAY)
+				frame = np.array(gray, dtype=np.uint8)
+				array = frame.astype(c_uint8)
+				a=c_uint8*(120*188+1)
+				t=a()
+				mylib.Get_01_Value.restype=POINTER(c_uint8)
+				t1=mylib.Get_01_Value(array.ctypes.data_as(POINTER(c_uint8)),byref(t),1)
+				for i in range(120):
+					m=0
+					for j in range(188*i,(i+1)*188):
+						aa[i][m]=t1[j]
+						m=m+1
+				self.label_4.setText(str(t1[120*188]))
+				m=0
+				for i in range(56,120):
+					d=0
+					for j in range(188):
+						md[m][d]=aa[i][j]
+						d=d+1
+					m=m+1
+				frame = np.array(md, dtype=np.uint8)
+				array = frame.astype(c_uint8)
+				a=c_int8*64*3
+				t=a()
+				mylib.Get_line_LMR.restype=POINTER(c_uint8)
+				t1=mylib.Get_line_LMR(array.ctypes.data_as(POINTER(c_uint8)),byref(t))
+				
+				for i in range(3):
+					m=0
+					for j in range(64*i,(i+1)*64):
+						side[m][i]=t1[j]
+						m=m+1	
+			
+			dk=56
+			for i in range(64):
+				for j in range(188):
+					self.Map[i][j]=aa[i][j]
+			for i in range(64):
+				for j in range(188):
+					md[i][j]=aa[dk][j]
+				dk=dk+1
+			for i in range(64):
+				md[i][side[i][0]]=100 #左边线
+				md[i][side[i][2]]=200 #右边线
+				md[i][side[i][1]]=150 #中线
+			for i in range(188):
+				md[ROAD_MAIN_ROW][i]=50 #主跑行
+			zz=0
+			dd=0
+			for i in range(56,120):
+				dd=0
+				for j in range(188):
+					self.Map[i][j]=md[zz][dd]
+					dd=dd+1
+				zz=zz+1
+			config.HEIGHT=len(self.Map)
+			config.WIDTH=len(self.Map[0])
+			self.repaint()
 
-        self.rota_top = Rotation_top()
-        self.scene.addItem(self.rota_top.car_top_item)
+			# for i in range(64):
+			# 	for j in range(188):
+			# 		md[i][j]=255
+			# for i in range(64):
+			# 	md[i][side[i][0]]=100 #左边线
+			# 	md[i][side[i][2]]=200 #右边线
+			# 	md[i][side[i][1]]=150 #中线
+			# for i in range(188):
+			# 	md[ROAD_MAIN_ROW][i]=50 #主跑行
+			# zz=0
+			# dd=0
+			# for i in range(56,120):
+			# 	dd=0
+			# 	for j in range(188):
+			# 		self.Map[i][j]=md[zz][dd]
+			# 		dd=dd+1
+			# 	zz=zz+1
+			# config.HEIGHT=len(self.Map)
+			# config.WIDTH=len(self.Map[0])
+			# self.repaint()
+			# filter_py(aa,bc,self.horizontalSlider4.value()*255)	
+			# # numpy中ndarray文件转为list
+			# # img_list = binary.tolist()
+			# for i in range(MT9V03X_H):
+			# 	for j in range(MT9V03X_W):
+			# 		self.Map[i][j]=bc[i][j]
+			# config.HEIGHT=len(self.Map)
+			# config.WIDTH=len(self.Map[0])
+			# self.repaint()
 
-        self.rota_tyre = Rotation_tyre()
-        self.scene.addItem(self.rota_tyre.car_tyre_item)
-        # 实际转角区
-        self.rota_real = Rotation_real()
-        self.scene.addItem(self.rota_real.car_back_real_item)
 
-        self.rota_top_real = Rotation_top_real()
-        self.scene.addItem(self.rota_top_real.car_top_real_item)
+			# for i in range(120):
+			# 	for j in range(188):
+			# 		bianxian[i][j]=0  #白色
+			# for i in range(120):
+			# 	# bianxian[i*3][int((aa[i][0]+aa[i][1])/2)*3]=255#中线
+			# 	bianxian[i][aa[i][0]]=255#左边线
+			# 	# bianxian[i*3][int(aa[i][1])*3]=255#右边线
+			# # for i in range(119):
+			# # 	bianxian[i*3+1][int((aa[i][0]+aa[i][1])/2)*3]=255 #中线
+			# # for i in range(119):
+			# # 	bianxian[i*3+2][int((aa[i][0]+aa[i][1])/2)*3]=255 #中线
+			# for i in range(188):
+			# 	bianxian[ROAD_MAIN_ROW][i]=255 #主跑行
+			# bianxian = Image.fromarray(np.uint8(bianxian))
+			# bianxian = bianxian.toqpixmap() #QPixmap
+			# self.label_14.setPixmap(bianxian)
+			# self.label_14.show()#刷新界面
 
-        self.rota_tyre_real = Rotation_tyre_real()
-        self.scene.addItem(self.rota_tyre_real.car_tyre_real_item)
+			while self.stop_flag == 1:#暂停的动作
+				cv2.waitKey(int(100/fps))#休眠一会，因为每秒播放24张图片，相当于放完一张图片后等待41ms
+			cv2.waitKey(int(100/fps))#休眠一会，因为每秒播放24张图片，相当于放完一张图片后等待41ms
+        #释放
+		self.cap.release()
 
-        self.setScene(self.scene)
-        self.stop = False
+	# 暂停触发
+	def stop_action(self):
+		if self.stop_flag == 0:
+			self.stop_flag = 1
+			self.stop_button.setIcon(QIcon('C:/Users/17628/Desktop/ui/icon/暂停.png'))
+		else:
+			self.stop_flag = 0
+			self.stop_button.setIcon(QIcon('C:/Users/17628/Desktop/ui/icon/开始.png'))
 
-        self.label = QLabel(self)
-        self.label.setText("显示图片")
-        self.label.setFixedSize(188*3, 120*3)
-        self.label.move(10, 100)
+	# 下一个触发
+	def next_action(self):
+		self.bClose = True
+		self.play_index = (self.play_index+1)%3
+		self.bClose = False
+		self.playVideoFile(self.fn_list[self.play_index])
 
-        self.label_13 = QLabel(self)
-        self.label_13.setText("显示图片")
-        self.label_13.setFixedSize(188*3, 120*3)
-        self.label_13.move(10, 500)
-        
-        font = QtGui.QFont()
-        font.setFamily("Consolas")
-        font.setPointSize(12)
-        font.setBold(False)
-        font.setItalic(False)
-        font.setWeight(3)
-        
-        font2 = QtGui.QFont()
-        font2.setFamily("Consolas")
-        font2.setPointSize(24)
-        font2.setBold(False)
-        font2.setItalic(False)
-        font2.setWeight(3)
+	# 拖动触发
+	def start_drag(self):
+		self.moving_flag = 1
 
-        self.label_1 = QLabel(self)
-        self.label_1.setText("舵机转角理论值：            度")
-        self.label_1.setFixedSize(300, 40)
-        self.label_1.move(1550, 10)
-        self.label_1.setFont(font)
+	# 拖动进度条行为
+	def drag_action(self):
+		self.moving_flag = 0
+		print('当前进度为%d，被拉动到的进度为%d'%(self.s1.value(), int(self.loop_flag/24)))
+		if self.s1.value()!=int(self.loop_flag/24):
+			print('当前进度为:'+str(self.s1.value()))
+			self.loop_flag = self.s1.value()*24
+			self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.loop_flag)
 
-        self.label_7 = QLabel(self)
-        self.label_7.setText("40")
-        self.label_7.setFixedSize(300, 40)
-        self.label_7.move(1680, 10)
-        self.label_7.setFont(font2)
+	# 暂停触发
+	def video_stop(self):
+		self.bClose = True
 
-        self.label_2 = QLabel(self)
-        self.label_2.setText("舵机转角实际值：            度")
-        self.label_2.setFixedSize(300, 40)
-        self.label_2.move(1150, 10)
-        self.label_2.setFont(font)
+	# 手动选择视频播放
+	def manual_choose(self):
+		fn,_ = QFileDialog.getOpenFileName(self,'Open file','C:/Users/17628/Desktop/ui/test video',"Video files (*.mp4 *.avi)")
+		self.playVideoFile(fn)
 
-        self.label_8 = QLabel(self)
-        self.label_8.setText("40")
-        self.label_8.setFixedSize(150, 40)
-        self.label_8.move(1280, 10)
-        self.label_8.setFont(font2)
-
-        self.label_3 = QLabel(self)
-        self.label_3.setText("倾角实际值：            度")
-        self.label_3.setFixedSize(300, 40)
-        self.label_3.move(1150, 275)
-        self.label_3.setFont(font)
-
-        self.label_9 = QLabel(self)
-        self.label_9.setText("40")
-        self.label_9.setFixedSize(150, 40)
-        self.label_9.move(1250, 275)
-        self.label_9.setFont(font2)
-
-        self.label_4 = QLabel(self)
-        self.label_4.setText("倾角理论值：            度")
-        self.label_4.setFixedSize(300, 40)
-        self.label_4.move(1550, 275)
-        self.label_4.setFont(font)
-
-        self.label_10 = QLabel(self)
-        self.label_10.setText("40")
-        self.label_10.setFixedSize(150, 40)
-        self.label_10.move(1650, 275)
-        self.label_10.setFont(font2)
-
-        self.label_5 = QLabel(self)
-        self.label_5.setText("转速实际值：            m/s")
-        self.label_5.setFixedSize(300, 40)
-        self.label_5.move(1150, 675)
-        self.label_5.setFont(font)
-
-        self.label_11 = QLabel(self)
-        self.label_11.setText("40")
-        self.label_11.setFixedSize(150, 40)
-        self.label_11.move(1250, 675)
-        self.label_11.setFont(font2)
-
-        self.label_6 = QLabel(self)
-        self.label_6.setText("转速理论值：            m/s")
-        self.label_6.setFixedSize(300, 40)
-        self.label_6.move(1550, 675)
-        self.label_6.setFont(font)
-
-        self.label_12 = QLabel(self)
-        self.label_12.setText("40")
-        self.label_12.setFixedSize(150, 40)
-        self.label_12.move(1650, 675)
-        self.label_12.setFont(font2)
-
-        self.btn = QPushButton(self)
-        self.btn.setText("打开图片")
-        self.btn.move(100, 10)
-        self.btn.setStyleSheet("QPushButton{background-color: rgb(225, 225, 225);border:2px groove gray;border-radius:10px;padding:2px 4px;border-style: outset;}"
-                                           "QPushButton:hover{background-color:rgb(229, 241, 251); color: black;}"
-                                           "QPushButton:pressed{background-color:rgb(204, 228, 247);border-style: inset;}")
-        self.btn.clicked.connect(self.openimage)
-        self.btn.resize(120,40)
-
-        self.btn1 = QPushButton(self)
-        self.btn1.setText("计算角度")
-        self.btn1.move(250, 10)
-        self.btn1.setStyleSheet("QPushButton{background-color: rgb(225, 225, 225);border:2px groove gray;border-radius:10px;padding:2px 4px;border-style: outset;}"
-                                           "QPushButton:hover{background-color:rgb(229, 241, 251); color: black;}"
-                                           "QPushButton:pressed{background-color:rgb(204, 228, 247);border-style: inset;}")
-        self.btn1.clicked.connect(self.startcal)
-        self.btn1.resize(120,40)
+	# 自动选择视频播放，如何自动视频播放？
+	def auto_choose(self):
+		self.playVideoFile(self.fn_list[self.play_index])
     
-    def startcal(self):
-        a=c_float*2
-        t=a()
-        mylib.control.restype=POINTER(c_float)
-        omega=c_float(1.0)
-        t1=mylib.control(omega,20,byref(t),0)
-        self.label_7.setText(str(round(t1[0],2)))
-        self.rota_top.car_top_item.setRotation(t1[0])  # 自身改变旋转度
-        self.label_10.setText(str(round(t1[1],2)))
-        self.rota.car_back_item.setRotation(t1[1])  # 自身改变旋转度
-        print(t1[0],t1[1])
+	# 设置进度条
+	def settingSlider(self,maxvalue):
+		self.s1.setMaximum(int(maxvalue/24))
+		self.label_end.setText(self.int2time(maxvalue))
 
-    def openimage(self):
-        imgName, imgType = QFileDialog.getOpenFileName(self, "打开图片", "", "*.bmp;;*.jpg;;*.png;;All Files(*)")
-        jpg = QtGui.QPixmap(imgName).scaled(self.label.width(), self.label.height())
-        self.label.setPixmap(jpg)
+	# 视频播放的时间函数
+	def int2time(self,num):
+        #每秒刷新50帧
+		num = int(num/24)
+		minute = int(num/60)
+		second = num - 60*minute
+		if minute < 10:
+			str_minute = '0'+str(minute)
+		else:
+			tr_minute = str(minute)
+		if second < 10:
+			str_second = '0'+str(second)
+		else:
+			str_second = str(second)
+		return str_minute+":"+str_second
 
-        imgptr = self.label.pixmap().toImage()
-        ptr = imgptr.constBits()
-        ptr.setsize(imgptr.byteCount())
-        mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
-        mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
-        gray = cv2.cvtColor(mat_img, cv2.COLOR_RGB2GRAY)
-        ret, binary = cv2.threshold(gray, 130, 255, cv2.THRESH_BINARY)
-        
-        frame = np.array(binary, dtype=np.uint8)
-        array = frame.astype(c_uint8)
-        a=c_uint8*120*2
-        t=a()
-        mylib.ImageGetSide.restype=c_char_p  
-        t1=mylib.ImageGetSide(array.ctypes.data_as(POINTER(c_uint8)),byref(t))
-        aa=[]
-        m=0
-        for i in range(120):
-            aa.append([])
-            for j in range(2):
-                aa[i].append(t1[m])
-                m=m+1
+	# 停止行为
+	def exit_stop(self):
+		self.stop_flag = 0
+		self.bClose = True
+		self.close()
 
-        for i in range(120):
-            binary[i*3][int((aa[i][0]+aa[i][1])/2)*3]=20 #中线
-        for i in range(119):
-            binary[i*3+1][int((aa[i][0]+aa[i][1])/2)*3]=20 #中线
-        for i in range(119):
-            binary[i*3+2][int((aa[i][0]+aa[i][1])/2)*3]=20 #中线
-        for i in range(188):
-            binary[ROAD_MAIN_ROW*3][i*3]=20 #主跑行
-        binary = Image.fromarray(np.uint8(binary))
-        binary = binary.toqpixmap() #QPixmap
-        self.label_13.setPixmap(binary)
+# 界面二可视化类
+class WinForm(QGraphicsView,QMainWindow):
+	# 视频播放列表
+	bClose = False
+	fn_list = ["C:/Users/17628/Desktop/ui/test video/慢速版.mp4","C:/Users/17628/Desktop/ui/test video/正常版.mp4"]
+	play_index = 0
+	def __init__(self, parent=None):
+		super(WinForm, self).__init__(parent)
+		self.setWindowTitle('参数跟踪')  # 设置窗口标题
+		self.setWindowTitle("参数跟踪")
+		self.setStyleSheet("background-color:#EDEDF5")
+		self.setGeometry(0, 0, 1920, 1080)  # 窗口整体窗口位置大小
 
-    def clickbutton(self):
-        print("click")
-        if not self.stop:
-            self.rota.anim.start()
-            self.rota_top.anim.start()
-            self.rota_tyre.anim.start()
-        else:
-            self.rota.anim.stop()
-            self.rota_top.anim.stop()
-            self.rota_tyre.anim.stop()
-        self.stop = ~self.stop
+		quit = QPushButton('click', self)  # button 对象
+		quit.setGeometry(10, 30, 60, 35)  # 设置按钮的位置 和 大小
+		quit.setStyleSheet("background-color: red")  # 设置按钮的风格和颜色
+		quit.clicked.connect(self.clickbutton)  # 点击按钮之后关闭窗口
 
-        # self.rota.anim.stop() #动画停止
-        # self.scene.deleteLater() #删除加载的动画
+		self.scene = QGraphicsScene(self)
+		self.scene.setSceneRect(0, 0, 1920, 1080)  # 动画 位置 这个需计算
 
+		# 理论转角区
+		self.rota = Rotation()
+		self.scene.addItem(self.rota.car_back_item)
 
+		self.rota_top = Rotation_top()
+		self.scene.addItem(self.rota_top.car_top_item)
+
+		self.rota_tyre = Rotation_tyre()
+		self.scene.addItem(self.rota_tyre.car_tyre_item)
+
+		# 实际转角区
+		self.rota_real = Rotation_real()
+		self.scene.addItem(self.rota_real.car_back_real_item)
+
+		self.rota_top_real = Rotation_top_real()
+		self.scene.addItem(self.rota_top_real.car_top_real_item)
+
+		self.rota_tyre_real = Rotation_tyre_real()
+		self.scene.addItem(self.rota_tyre_real.car_tyre_real_item)
+
+		# 设定动画坐标轴
+		self.setScene(self.scene)
+		self.stop = False
+
+		self.label_13 = QLabel(self)
+		self.label_13.setText("显示图片")
+		self.label_13.setFixedSize(188*3, 120*3)
+		self.label_13.move(10, 100)  #10  485
+
+		self.label_14 = QLabel(self)
+		self.label_14.setText("显示图片")
+		self.label_14.setFixedSize(188*3, 120*3)
+		self.label_14.move(564+15, 100)  #485
+
+		# 设置字体类
+		font = QtGui.QFont()
+		font.setFamily("Consolas")
+		font.setPointSize(12)
+		font.setBold(False)
+		font.setItalic(False)
+		font.setWeight(3)
+
+		font2 = QtGui.QFont()
+		font2.setFamily("Consolas")
+		font2.setPointSize(24)
+		font2.setBold(False)
+		font2.setItalic(False)
+		font2.setWeight(3)
+
+		self.label_1 = QLabel(self)
+		self.label_1.setText("舵机转角理论值：            度")
+		self.label_1.setFixedSize(300, 40)
+		self.label_1.move(1550, 30)
+		self.label_1.setFont(font)
+
+		self.label_7 = QLabel(self)
+		self.label_7.setText("40")
+		self.label_7.setFixedSize(300, 40)
+		self.label_7.move(1680, 30)
+		self.label_7.setFont(font2)
+
+		self.label_2 = QLabel(self)
+		self.label_2.setText("舵机转角实际值：            度")
+		self.label_2.setFixedSize(300, 40)
+		self.label_2.move(1175, 30)
+		self.label_2.setFont(font)
+
+		self.label_8 = QLabel(self)
+		self.label_8.setText("40")
+		self.label_8.setFixedSize(150, 40)
+		self.label_8.move(1305, 30)
+		self.label_8.setFont(font2)
+
+		self.label_3 = QLabel(self)
+		self.label_3.setText("倾角实际值：            度")
+		self.label_3.setFixedSize(300, 40)
+		self.label_3.move(1175, 295)
+		self.label_3.setFont(font)
+
+		self.label_9 = QLabel(self)
+		self.label_9.setText("40")
+		self.label_9.setFixedSize(150, 40)
+		self.label_9.move(1275, 295)
+		self.label_9.setFont(font2)
+
+		self.label_4 = QLabel(self)
+		self.label_4.setText("倾角理论值：            度")
+		self.label_4.setFixedSize(300, 40)
+		self.label_4.move(1550, 295)
+		self.label_4.setFont(font)
+
+		self.label_10 = QLabel(self)
+		self.label_10.setText("40")
+		self.label_10.setFixedSize(150, 40)
+		self.label_10.move(1650, 295)
+		self.label_10.setFont(font2)
+
+		self.label_5 = QLabel(self)
+		self.label_5.setText("转速实际值：            m/s")
+		self.label_5.setFixedSize(300, 40)
+		self.label_5.move(1175, 695)
+		self.label_5.setFont(font)
+
+		self.label_11 = QLabel(self)
+		self.label_11.setText("40")
+		self.label_11.setFixedSize(150, 40)
+		self.label_11.move(1275, 695)
+		self.label_11.setFont(font2)
+
+		self.label_6 = QLabel(self)
+		self.label_6.setText("转速理论值：            m/s")
+		self.label_6.setFixedSize(300, 40)
+		self.label_6.move(1550, 695)
+		self.label_6.setFont(font)
+
+		self.label_12 = QLabel(self)
+		self.label_12.setText("40")
+		self.label_12.setFixedSize(150, 40)
+		self.label_12.move(1650, 695)
+		self.label_12.setFont(font2)
+
+		# 建立滚动条布局
+		self.topFiller = QWidget()
+		self.topFiller.setMinimumSize(188*3, 2000)  # 设置滚动条的尺寸
+
+		# 设置基本参数列表，初始化
+		global label_canshu_value
+		label_canshu=["环岛标志位","大环岛标志位","环岛状态切换延时","左边线黑点寻找标志位","右边线黑点寻找标志位","近处处理标志","十字标志位","出界标志位","坡道标志位","左丢单边线(点)次数","右丢单边线(点)次数","左右同时丢边线(点)次数","十字丢线次数","图像中线"]
+		label_canshu_e=["Island_flag","Big_island_flag","Island_change_time","Found_left_flag","Found_right_flag","Near_flag","Cross_road_flag","out_flag","Ram_flag","L_lost_cnt","R_lost_cnt","L_R_lost_cnt","Cross_road_cnt","Middle_line"]
+		label_canshu_value=[]
+		for i in range(len(label_canshu)):
+			num = i
+			var = 'v' + str(num)
+			label_canshu_value.append(var)
+
+		# 动态生成基本参数列表的label，同时设定对应的布局
+		for i in range(len(label_canshu)):
+			self.label1000=QLabel(self.topFiller)
+			self.label1000.setText(label_canshu[i])
+			self.label1000.move(20,50+i*30)
+			self.label1000.setFont(font)
+
+			self.label2000=QLabel(self.topFiller)
+			self.label2000.setText(label_canshu_e[i])
+			self.label2000.move(240,50+i*30)
+			self.label2000.setFont(font)
+
+			self.label3000=QLabel(self.topFiller)
+			self.label3000.setObjectName(label_canshu_value[i])
+			self.label3000.setText("00000")
+			self.label3000.move(470,50+i*30)
+			self.label3000.setFont(font)
+
+		# 基本参数列表头
+		self.label17=QLabel(self.topFiller)
+		self.label17.setText("基本参数                  变量名                   参数值\n--------------------------------------------------------")
+		self.label17.setStyleSheet("color:#F46F0C")
+		self.label17.setFont(font)
+		self.label17.resize(188*3,50)
+		self.label17.move(20,0)
+
+		# 将布局放置在滚动条中
+		self.scrol = QScrollArea(self)
+		self.scrol.setWidget(self.topFiller)
+		self.scrol.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+		self.scrol.resize(188*3,430)
+		self.scrol.move(188*3+15,485)
+
+		# 设置滚动条布局
+		self.topFiller2 = QWidget()
+		self.topFiller2.setMinimumSize(188*3, 2000)  # 设置滚动条的尺寸
+
+		# 边线列表头
+		self.label18=QLabel(self.topFiller2)
+		self.label18.setText("行数            左边线            中线            右边线\n--------------------------------------------------------")
+		self.label18.setStyleSheet("color:#F46F0C")
+		self.label18.resize(188*3,50)
+		self.label18.move(20,0)
+		self.label18.setFont(font)
+
+		# 动态生成边线行数label，同时设定对应的布局
+		for filename in range(64):
+			self.label20 = QLabel(self.topFiller2)
+			self.label20.setText(str(filename))
+			self.label20.move(20,filename*30+50)
+			self.label20.setFont(font)
+		
+		# 设置左中右边线参数列表，初始化
+		global labelLeft,labelRight,labelMid
+		labelLeft = []
+		for i in range(64):
+			num = i
+			var = 'L' + str(num)
+			labelLeft.append(var)
+		labelMid = []
+		for i in range(64):
+			num = i
+			var = 'M' + str(num)
+			labelMid.append(var)
+		labelRight = []
+		for i in range(64):
+			num = i
+			var = 'R' + str(num)
+			labelRight.append(var)
+
+		# 动态生成左中右边线列表的label，同时设定对应的布局
+		for i in range(64):
+			self.label100=QLabel(self.topFiller2)
+			self.label100.setObjectName(labelLeft[i])
+			self.label100.setText("000")
+			self.label100.move(165,50+i*30)
+			self.label100.setFont(font)
+			self.label100.setStyleSheet("color:#2A78D6")
+
+			self.label200=QLabel(self.topFiller2)
+			self.label200.setObjectName(labelMid[i])
+			self.label200.setText("000")
+			self.label200.move(165+155,50+i*30)
+			self.label200.setFont(font)
+			self.label200.setStyleSheet("color:#782AD6")
+
+			self.label300=QLabel(self.topFiller2)
+			self.label300.setObjectName(labelRight[i])
+			self.label300.setText("000")
+			self.label300.move(165+150+150,50+i*30)
+			self.label300.setFont(font)
+			self.label300.setStyleSheet("color:#45C937")
+
+		# 将布局放置在滚动条中
+		self.scrol2 = QScrollArea(self)
+		self.scrol2.setWidget(self.topFiller2)
+		self.scrol2.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+		self.scrol2.resize(188*3,430)
+		self.scrol2.move(10,485)
+
+		self.btn = QPushButton(self)
+		self.btn.setText("打开图片")
+		self.btn.move(100, 30)
+		self.btn.setStyleSheet("QPushButton{background-color: rgb(225, 225, 225);border:2px groove gray;border-radius:10px;padding:2px 4px;border-style: outset;}"
+											"QPushButton:hover{background-color:rgb(229, 241, 251); color: black;}"
+											"QPushButton:pressed{background-color:rgb(204, 228, 247);border-style: inset;}")
+		self.btn.clicked.connect(self.openimage)
+		self.btn.resize(120,40)
+
+		self.btn1 = QPushButton(self)
+		self.btn1.setText("计算角度")
+		self.btn1.move(250, 30)
+		self.btn1.setStyleSheet("QPushButton{background-color: rgb(225, 225, 225);border:2px groove gray;border-radius:10px;padding:2px 4px;border-style: outset;}"
+											"QPushButton:hover{background-color:rgb(229, 241, 251); color: black;}"
+											"QPushButton:pressed{background-color:rgb(204, 228, 247);border-style: inset;}")
+		self.btn1.clicked.connect(self.startcal)
+		self.btn1.resize(120,40)
+
+		self.screen = QDesktopWidget().screenGeometry()
+		self.resize(self.screen.width(), self.screen.height())
+
+		# 设置菜单栏
+		bar = QMenuBar(self)
+		bar.setFixedSize(self.screen.width(),24)
+		# 设置选项二
+		play_menu = bar.addMenu("视频调试")
+		# 设置按钮一
+		play_video = QAction("打开视频文件",self)
+		play_video.setShortcut("Ctrl+1")
+		play_video.triggered.connect(self.manual_choose)
+		play_menu.addAction(play_video)
+		# 设置按钮二
+		play_pictures = QAction("自动播放视频",self)
+		play_pictures.setShortcut("Ctrl+2")
+		play_pictures.triggered.connect(self.auto_choose)
+		play_menu.addAction(play_pictures)
+		# 设置停止按钮
+		play_stop = QAction("停止",self)
+		play_stop.setShortcut("Ctrl+3")
+		play_stop.triggered.connect(self.video_stop)
+		play_menu.addAction(play_stop)
+		# 设置退出按钮
+		exit_menu = bar.addMenu("图片调试")
+		exit_option = QAction("退出",self)
+		exit_option.setShortcut("Ctrl+Q")
+		exit_option.triggered.connect(self.exit_stop)
+		exit_menu.addAction(exit_option)
+		# 设置菜单栏的位置
+		bar.move(0,0)
+
+		# 设置滑动条
+		self.s1 = QSlider(Qt.Horizontal,self)
+		self.s1.setToolTip("滑动条")
+		self.s1.setMinimum(0)  # 设置最大值
+		self.s1.setMaximum(50)  # 设置最小值
+		self.s1.setSingleStep(1)  # 设置间隔
+		self.s1.setValue(0)  # 设置当前值
+		self.s1.sliderMoved.connect(self.start_drag)
+		self.s1.sliderReleased.connect(self.drag_action)
+		self.s1.setFixedSize(564, 30)
+		self.moving_flag = 0
+		self.stop_flag = 0  # 如果当前为播放值为0,如果当前为暂停值为1
+		self.s1.move(10,485+430+20)
+		# 设置两个标签分别是当前时间和结束时间
+		self.label_start = QLabel("00:00",self)
+		self.label_start.move(10,485+430+55)
+		self.label_start.setFont(font)
+		self.label_end = QLabel("00:00",self)
+		self.label_end.setFont(font)
+		self.label_end.move(534,485+430+55)
+		# 设置暂停播放和下一个按钮
+		self.stop_button = QPushButton(self)
+		self.stop_button.setIcon(QIcon('C:/Users/17628/Desktop/ui/icon/开始.png'))
+		self.stop_button.setIconSize(QSize(30,30))
+		self.stop_button.clicked.connect(self.stop_action)
+		self.stop_button.move(564+25,485+430+20)
+		self.next_button = QPushButton(self)
+		self.next_button.setIcon(QIcon('C:/Users/17628/Desktop/ui/icon/下一个.png'))
+		self.next_button.setIconSize(QSize(30,30))
+		self.next_button.clicked.connect(self.next_action)
+		self.next_button.move(564+35+35,485+430+20)
+
+	# 定义将opencv图像转PyQt图像的函数
+	def cvImgtoQtImg(self,cvImg):  
+		QtImgBuf = cv2.cvtColor(cvImg, cv2.COLOR_BGR2BGRA)
+		QtImg = QtGui.QImage(QtImgBuf.data, QtImgBuf.shape[1], QtImgBuf.shape[0],QtGui.QImage.Format_RGB32)
+		return QtImg
+
+	# 播放视频进行参数跟踪，目前只有OTSU的二值化图像
+	def playVideoFile(self,fn):
+		self.cap = cv2.VideoCapture(fn)
+		frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+		self.settingSlider(frames)
+		fps = 24
+		self.loop_flag = 0
+		if not self.cap.isOpened():
+			print("Cannot open Video File")
+			exit()
+		while not self.bClose:
+			ret, frame = self.cap.read()  # 逐帧读取影片
+			if not ret:
+				if frame is None:
+					print("The video has end.")
+				else:
+					print("Read video error!")
+				break
+			if self.moving_flag==0:
+				self.label_start.setText(self.int2time(self.loop_flag))
+				self.s1.setValue(int(self.loop_flag/24))#设置当前值
+			self.loop_flag += 1
+
+			# 处理得到二值化图像
+			global side,md
+			mat_img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+			gray = cv2.cvtColor(mat_img, cv2.COLOR_RGB2GRAY)
+			frame = np.array(gray, dtype=np.uint8)
+			array = frame.astype(c_uint8)
+			a=c_uint8*(120*188+1)
+			t=a()
+			mylib.Get_01_Value.restype=POINTER(c_uint8)
+			t1=mylib.Get_01_Value(array.ctypes.data_as(POINTER(c_uint8)),byref(t),4)
+			for i in range(120):
+				m=0
+				for j in range(188*i,(i+1)*188):
+					aa[i][m]=t1[j]
+					if(aa[i][m]==1):
+						aa[i][m]=0
+					m=m+1
+			# 得到边线数组
+			m=0
+			for i in range(56,120):
+				d=0
+				for j in range(188):
+					md[m][d]=aa[i][j]
+					d=d+1
+				m=m+1
+			frame = np.array(md, dtype=np.uint8)
+			array = frame.astype(c_uint8)
+			a=c_int8*64*3
+			t=a()
+			mylib.Get_line_LMR.restype=POINTER(c_uint8)
+			t1=mylib.Get_line_LMR(array.ctypes.data_as(POINTER(c_uint8)),byref(t))
+			for i in range(3):
+				m=0
+				for j in range(64*i,(i+1)*64):
+					side[m][i]=t1[j]
+					m=m+1	
+			# 创建一个新的cv2格式图像存储二值化图像
+			img_binary=create_image_singel(aa)
+			# 转化到label支持的图像格式
+			QtImg = self.cvImgtoQtImg(img_binary)
+			# 显示二值化图像
+			self.label_13.setPixmap(QtGui.QPixmap.fromImage(QtImg).scaled(self.label_13.size()))
+			self.label_13.show()  # 刷新界面
+
+			# 创建一个新的cv2格式图像存储边线图像
+			img=create_image(side)
+			# 转化到label支持的图像格式
+			QtImg = self.cvImgtoQtImg(img)
+			# 显示二值化图像
+			self.label_14.setPixmap(QtGui.QPixmap.fromImage(QtImg).scaled(self.label_14.size()))
+			self.label_14.show()  # 刷新界面
+			
+			# 用于参数追踪
+			a=c_float*2
+			t=a()
+			mylib.control.restype=POINTER(c_float)
+			omega=c_float(1.0)
+			cha=side[ROAD_MAIN_ROW][1]-93
+			# 输出舵机转角以及车身倾角信息
+			t1=mylib.control(omega,cha,byref(t),0)
+			if(cha<0):
+				t1[0]=t1[0]-90
+				t1[1]=t1[1]-90
+			# 进行可视化
+			self.label_7.setText(str(round(t1[0],2)))
+			self.rota_top.car_top_item.setRotation(t1[0])  # 自身改变旋转度
+			self.label_10.setText(str(round(t1[1],2)))
+			self.rota.car_back_item.setRotation(t1[1])  # 自身改变旋转度
+			
+			# 进行边线数组以及基本参数的可视化
+			global labelLeft,labelRight,labelMid,label_canshu_value
+			for i in range(len(label_canshu_value)):
+				aaa=self.findChild(QLabel,label_canshu_value[i])
+				aaa.setText(str(t1[0]))
+			# 进行边线数组以及基本参数的可视化
+			for i in range(64):
+				aaa=self.findChild(QLabel,labelLeft[i])
+				aaa.setText(str(side[i][0]))
+				aaa=self.findChild(QLabel,labelMid[i])
+				aaa.setText(str(side[i][1]))
+				aaa=self.findChild(QLabel,labelRight[i])
+				aaa.setText(str(side[i][2]))
+				
+			while self.stop_flag == 1:  # 暂停的动作
+				cv2.waitKey(int(1000/fps))  # 休眠一会，因为每秒播放24张图片，相当于放完一张图片后等待41ms
+			cv2.waitKey(int(1000/fps))  # 休眠一会，因为每秒播放24张图片，相当于放完一张图片后等待41ms
+        # 释放
+		self.cap.release()
+
+	# 暂停触发
+	def stop_action(self):
+		if self.stop_flag == 0:
+			self.stop_flag = 1
+			self.stop_button.setIcon(QIcon('C:/Users/17628/Desktop/ui/icon/暂停.png'))
+		else:
+			self.stop_flag = 0
+			self.stop_button.setIcon(QIcon('C:/Users/17628/Desktop/ui/icon/开始.png'))
+
+	# 下一个触发
+	def next_action(self):
+		self.bClose = True
+		self.play_index = (self.play_index+1)%3
+		self.bClose = False
+		self.playVideoFile(self.fn_list[self.play_index])
+
+    # 滑动条触发 
+	def start_drag(self):
+		self.moving_flag = 1
+
+	# 拖动行为
+	def drag_action(self):
+		self.moving_flag = 0
+		print('当前进度为%d，被拉动到的进度为%d'%(self.s1.value(), int(self.loop_flag/24)))
+		if self.s1.value()!=int(self.loop_flag/24):
+			print('当前进度为:'+str(self.s1.value()))
+			self.loop_flag = self.s1.value()*24
+			self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.loop_flag)
+
+	# 暂停行为
+	def video_stop(self):
+		self.bClose = True
+
+	# 手动选择视频播放
+	def manual_choose(self):
+		fn,_ = QFileDialog.getOpenFileName(self,'Open file','C:/Users/17628/Desktop/ui/test video',"Video files (*.mp4 *.avi)")
+		self.playVideoFile(fn)
+
+	# 自动选择视频播放，如何自动视频播放？
+	def auto_choose(self):
+		self.playVideoFile(self.fn_list[self.play_index])
+    
+	# 设置进度条
+	def settingSlider(self,maxvalue):
+		self.s1.setMaximum(int(maxvalue/24))
+		self.label_end.setText(self.int2time(maxvalue))
+
+	# 视频播放中的时间函数
+	def int2time(self,num):
+        # 每秒刷新24帧
+		num = int(num/24)
+		minute = int(num/60)
+		second = num - 60*minute
+		if minute < 10:
+			str_minute = '0'+str(minute)
+		else:
+			tr_minute = str(minute)
+		if second < 10:
+			str_second = '0'+str(second)
+		else:
+			str_second = str(second)
+		return str_minute+":"+str_second
+
+	# 暂停行为
+	def exit_stop(self):
+		self.stop_flag = 0
+		self.bClose = True
+		self.close()
+
+    # 用于旋转角度可视化的测试
+	def startcal(self):
+		a=c_float*2
+		t=a()
+		mylib.control.restype=POINTER(c_float)
+		omega=c_float(1.0)
+		t1=mylib.control(omega,10,byref(t),0)
+		self.label_7.setText(str(round(t1[0],2)))
+		print(t1)
+		self.rota_top.car_top_item.setRotation(t1[0])  # 自身改变旋转度
+		self.label_10.setText(str(round(t1[1],2)))
+		self.rota.car_back_item.setRotation(t1[1])  # 自身改变旋转度
+		print(t1[0],t1[1])
+
+	# 打开图片，有bug，未调，不需要
+	def openimage(self):
+		imgName, imgType = QFileDialog.getOpenFileName(self, "打开图片", "", "*.bmp;;*.jpg;;*.png;;All Files(*)")
+		# 将图片转化为label支持的图像格式
+		jpg = QtGui.QPixmap(imgName).scaled(self.label.width(), self.label.height())
+		# 显示在label上
+		self.label.setPixmap(jpg)
+
+		imgptr = self.label.pixmap().toImage()
+		ptr = imgptr.constBits()
+		ptr.setsize(imgptr.byteCount())
+		mat = np.array(ptr).reshape(imgptr.height(), imgptr.width(), 4)
+		mat_img = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
+		gray = cv2.cvtColor(mat_img, cv2.COLOR_RGB2GRAY)
+		ret, binary = cv2.threshold(gray, 130, 255, cv2.THRESH_BINARY)
+
+		frame = np.array(binary, dtype=np.uint8)
+		array = frame.astype(c_uint8)
+		a=c_uint8*120*2
+		t=a()
+		mylib.ImageGetSide.restype=c_char_p  
+		t1=mylib.ImageGetSide(array.ctypes.data_as(POINTER(c_uint8)),byref(t))
+		aa=[]
+		m=0
+		for i in range(120):
+			aa.append([])
+			for j in range(2):
+				aa[i].append(t1[m])
+				m=m+1
+		binary = Image.fromarray(np.uint8(binary))
+		binary = binary.toqpixmap() #QPixmap
+		self.label_13.setPixmap(binary)     
+		
+	# 用于旋转角度可视化的测试
+	def clickbutton(self):
+		print("click")
+		if not self.stop:
+			self.rota.anim.start()
+			self.rota_top.anim.start()
+			self.rota_tyre.anim.start()
+		else:
+			self.rota.anim.stop()
+			self.rota_top.anim.stop()
+			self.rota_tyre.anim.stop()
+		self.stop = ~self.stop
+
+# 旋转动画类 后视角
 class Rotation(QObject):
 	def __init__(self):
 		super().__init__()
@@ -779,7 +2236,7 @@ class Rotation(QObject):
 		scaledPixmap = car_back.scaled(261/1.5, 458/1.5)  # 动画大小
 		self.animation()
 		self.car_back_item = QGraphicsPixmapItem(scaledPixmap)
-		self.car_back_item.setPos(1600,350)
+		self.car_back_item.setPos(1600,370)
 		self.car_back_item.setTransformOriginPoint(130/1.5, 458/1.5)  # 设置中心为旋转
 
 	def _set_rotation(self, degree):
@@ -794,7 +2251,7 @@ class Rotation(QObject):
 
 	rotation = pyqtProperty(int, fset=_set_rotation)  # 属性动画改变自身数值
 
-
+# 旋转动画类 顶视角
 class Rotation_top(QObject):
 	def __init__(self):
 		super().__init__()
@@ -802,7 +2259,7 @@ class Rotation_top(QObject):
 		scaledPixmap2 = car_top.scaled(220/1.5, 247/1.5)  # 动画大小
 		self.animation()
 		self.car_top_item = QGraphicsPixmapItem(scaledPixmap2)
-		self.car_top_item.setPos(1607,80)
+		self.car_top_item.setPos(1607,100)
 		self.car_top_item.setTransformOriginPoint(110/1.5, 230/1.5)  # 设置中心为旋转
 
 	def _set_rotation(self, degree):
@@ -817,6 +2274,7 @@ class Rotation_top(QObject):
 
 	rotation = pyqtProperty(int, fset=_set_rotation)  # 属性动画改变自身数值
 
+# 旋转动画类 车轮
 class Rotation_tyre(QObject):
 	def __init__(self):
 		super().__init__()
@@ -824,7 +2282,7 @@ class Rotation_tyre(QObject):
 		scaledPixmap2 = car_tyre.scaled(236/1.5, 236/1.5)  # 动画大小
 		self.animation()
 		self.car_tyre_item = QGraphicsPixmapItem(scaledPixmap2)
-		self.car_tyre_item.setPos(1607,750)
+		self.car_tyre_item.setPos(1607,770)
 		self.car_tyre_item.setTransformOriginPoint(118/1.5, 118/1.5)  # 设置中心为旋转
 
 	def _set_rotation(self, degree):
@@ -839,6 +2297,7 @@ class Rotation_tyre(QObject):
 
 	rotation = pyqtProperty(int, fset=_set_rotation)  # 属性动画改变自身数值
 
+# 旋转动画类 俯视角
 class Rotation_real(QObject):
 	def __init__(self):
 		super().__init__()
@@ -846,7 +2305,7 @@ class Rotation_real(QObject):
 		scaledPixmap = car_back_real.scaled(261/1.5, 458/1.5)  # 动画大小
 		self.animation()
 		self.car_back_real_item = QGraphicsPixmapItem(scaledPixmap)
-		self.car_back_real_item.setPos(1200,350)
+		self.car_back_real_item.setPos(1225,370)
 		self.car_back_real_item.setTransformOriginPoint(130/1.5, 458/1.5)  # 设置中心为旋转
 
 	def _set_rotation(self, degree):
@@ -861,7 +2320,7 @@ class Rotation_real(QObject):
 
 	rotation = pyqtProperty(int, fset=_set_rotation)  # 属性动画改变自身数值
 
-
+# 旋转动画类 顶视角
 class Rotation_top_real(QObject):
 	def __init__(self):
 		super().__init__()
@@ -869,7 +2328,7 @@ class Rotation_top_real(QObject):
 		scaledPixmap2 = car_top_real.scaled(220/1.5, 247/1.5)  # 动画大小
 		self.animation()
 		self.car_top_real_item = QGraphicsPixmapItem(scaledPixmap2)
-		self.car_top_real_item.setPos(1207,80)
+		self.car_top_real_item.setPos(1232,100)
 		self.car_top_real_item.setTransformOriginPoint(110/1.5, 230/1.5)  # 设置中心为旋转
 
 	def _set_rotation(self, degree):
@@ -884,6 +2343,7 @@ class Rotation_top_real(QObject):
 
 	rotation = pyqtProperty(int, fset=_set_rotation)  # 属性动画改变自身数值
 
+# 旋转动画类 车轮
 class Rotation_tyre_real(QObject):
 	def __init__(self):
 		super().__init__()
@@ -891,7 +2351,7 @@ class Rotation_tyre_real(QObject):
 		scaledPixmap2 = car_tyre_real.scaled(236/1.5, 236/1.5)  # 动画大小
 		self.animation()
 		self.car_tyre_real_item = QGraphicsPixmapItem(scaledPixmap2)
-		self.car_tyre_real_item.setPos(1207,750)
+		self.car_tyre_real_item.setPos(1232,770)
 		self.car_tyre_real_item.setTransformOriginPoint(118/1.5, 118/1.5)  # 设置中心为旋转
 
 	def _set_rotation(self, degree):
@@ -906,13 +2366,11 @@ class Rotation_tyre_real(QObject):
 
 	rotation = pyqtProperty(int, fset=_set_rotation)  # 属性动画改变自身数值
 
-
 # 全局阈值
 def threshold_demo(image,th):
 	gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
 	ret, binary = cv2.threshold(gray, th, 255, cv2.THRESH_BINARY)
 	print("阈值：", ret)
-	#cv2.imshow("binary", binary)
 	return binary
 
 # 局部阈值
@@ -921,6 +2379,112 @@ def local_threshold(image):
 	# binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,cv2.THRESH_BINARY,25,10)
 	binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 25, 10)
 	cv2.imshow("binary ", binary)
+
+# sobel手动阈值
+def sobel_auto_py(frame,xx,th):
+	# 为了方便gui调参用python写了一遍
+	KERNEL_SIZE = 3
+	xStart = KERNEL_SIZE / 2
+	xEnd = MT9V03X_W - KERNEL_SIZE / 2
+	yStart = KERNEL_SIZE / 2
+	yEnd = MT9V03X_H - KERNEL_SIZE / 2
+	temp=[0,0,0,0]
+	for i in range(int(yStart),int(yEnd)):
+		for j in range(int(xStart),int(xEnd)):
+			temp[0] = -int(frame[i - 1][j - 1]) + int(frame[i - 1][j + 1]) - int(frame[i][j - 1] )+ int(frame[i][j + 1]) - int(frame[i + 1][j - 1]) + int(frame[i + 1][j + 1])    
+			temp[1] = -int(frame[i - 1][j - 1]) + int(frame[i + 1][j - 1]) - int(frame[i - 1][j]) + int(frame[i + 1][j]) - int(frame[i - 1][j + 1]) + int(frame[i + 1][j + 1])     
+			temp[2] = -int(frame[i - 1][j]) + int(frame[i][j - 1])- int(frame[i][j + 1]) + int(frame[i + 1][j])	- int(frame[i - 1][j + 1]) + int(frame[i + 1][j - 1])				   
+			temp[3] = -int(frame[i - 1][j]) + int(frame[i][j + 1])- int(frame[i][j - 1]) + int(frame[i + 1][j]) - int(frame[i - 1][j - 1]) + int(frame[i + 1][j + 1])          
+			temp[0] = abs(temp[0])
+			temp[1] = abs(temp[1])
+			temp[2] = abs(temp[2])
+			temp[3] = abs(temp[3])
+			# /* 找出梯度幅值最大值  */
+			for k in range(1,4):
+				if (temp[0] < temp[k]):
+					temp[0] = temp[k]
+			# /* 使用像素点邻域内像素点之和的一定比例    作为阈值  */
+			temp[3] = int(frame[i - 1][j - 1]) + int(frame[i - 1][j]) + int(frame[i - 1][j + 1])+ int(frame[i][j - 1]) + int(frame[i][j]) + int(frame[i][j + 1])+ int(frame[i + 1][j - 1]) + int(frame[i + 1][j]) + int(frame[i + 1][j + 1])
+			if(temp[0]>temp[3]/(th)):
+				xx[i][j]=1
+			else:
+				xx[i][j]=255
+
+# sobel自动阈值
+def sobel_motor_py(frame,xx,th):
+	# 为了方便gui调参用python写了一遍
+	KERNEL_SIZE = 3
+	xStart = KERNEL_SIZE / 2
+	xEnd = MT9V03X_W - KERNEL_SIZE / 2
+	yStart = KERNEL_SIZE / 2
+	yEnd = MT9V03X_H - KERNEL_SIZE / 2
+	temp=[0,0,0,0]
+	for i in range(int(yStart),int(yEnd)):
+		for j in range(int(xStart),int(xEnd)):
+			temp[0] = -int(frame[i - 1][j - 1]) + int(frame[i - 1][j + 1]) - int(frame[i][j - 1] )+ int(frame[i][j + 1]) - int(frame[i + 1][j - 1]) + int(frame[i + 1][j + 1])    
+			temp[1] = -int(frame[i - 1][j - 1]) + int(frame[i + 1][j - 1]) - int(frame[i - 1][j]) + int(frame[i + 1][j]) - int(frame[i - 1][j + 1]) + int(frame[i + 1][j + 1])     
+			temp[2] = -int(frame[i - 1][j]) + int(frame[i][j - 1])- int(frame[i][j + 1]) + int(frame[i + 1][j])	- int(frame[i - 1][j + 1]) + int(frame[i + 1][j - 1])				   
+			temp[3] = -int(frame[i - 1][j]) + int(frame[i][j + 1])- int(frame[i][j - 1]) + int(frame[i + 1][j]) - int(frame[i - 1][j - 1]) + int(frame[i + 1][j + 1])          
+			temp[0] = abs(temp[0])
+			temp[1] = abs(temp[1])
+			temp[2] = abs(temp[2])
+			temp[3] = abs(temp[3])
+			# /* 找出梯度幅值最大值  */
+			for k in range(1,4):
+				if (temp[0] < temp[k]):
+					temp[0] = temp[k]
+			if(temp[0]>th):
+				xx[i][j]=1
+			else:
+				xx[i][j]=255
+
+# 图像滤波
+def filter_py(xx,yy,fil):	
+	temp=0
+	for i in range(MT9V03X_H-1):
+		for j in range(MT9V03X_W-1):
+			temp = int(xx[i - 1][j - 1]) + int(xx[i - 1][j]) + int(xx[i - 1][j + 1]) +int(xx[i][j - 1]) + int(xx[i][j]) + int(xx[i][j + 1]) +int(xx[i + 1][j - 1]) + int(xx[i + 1][j]) + int(xx[i + 1][j + 1])
+			# /* 邻域内5个点是边沿 则保留该点 可以调节这里优化滤波效果 */
+			if (temp>fil):
+				yy[i][j]=255
+			else:
+				yy[i][j]=1
+
+# 由边线创建cv2格式图像，三通道
+def create_image(cc):
+    # 多通道8位字节的图像创建
+    img = np.zeros([120, 188, 3], np.uint8)   # 创建一个图片，规定长、宽、通道数 数值，类型
+    img[:, :, 0] = np.ones([120, 188]) * 255   # 设定第1个通道数值
+    img[:, :, 1] = np.ones([120, 188]) * 255   # 设定第2个通道数值
+    img[:, :, 2] = np.ones([120, 188]) * 255   # 设定第3个通道数值
+    m=0
+    for i in range(56,120):
+        # for j in range(188):
+        img[i][cc[m][0]][0]=214
+        img[i][cc[m][0]][1]=120
+        img[i][cc[m][0]][2]=42
+
+        img[i][cc[m][1]][0]=188
+        img[i][cc[m][1]][1]=31
+        img[i][cc[m][1]][2]=225
+
+        img[i][cc[m][2]][0]=69
+        img[i][cc[m][2]][1]=201
+        img[i][cc[m][2]][2]=55
+        m=m+1
+    return img
+
+# 由边线创建cv2格式图像，单通道
+def create_image_singel(cc):
+    # 多通道8位字节的图像创建
+    img = np.zeros([120, 188, 1], np.uint8)   # 创建一个图片，规定长、宽、通道数 数值，类型
+    img[:, :, 0] = np.ones([120, 188]) * 255   # 设定第1个通道数值
+    for i in range(120):
+        m=0
+        for j in range(188):
+            img[i][j][0]=cc[i][j]
+        m=m+1
+    return img
 
 if __name__ == '__main__':
 	app = QApplication(sys.argv)
