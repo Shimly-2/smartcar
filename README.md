@@ -1,3 +1,58 @@
+## 更新至V1.2
+
+更新日志 2022/2/7
+
+### 添加功能
+
+#### 界面一
+
+- 图片的显示
+- 视频的显示
+- 支持视频的暂停以及跳帧
+- 六种二值化处理方法
+- 图像滤波
+- 二值化以及滤波参数ctrl+s一键保存
+- 边线数组显示
+- 支持对视频的单帧进行处理
+
+![11](./pic/界面一.gif)
+
+#### 界面二
+
+- 图片的显示
+- 二值化视频与边线数组视频的显示
+- 支持视频的暂停以及跳帧
+- 边线数组的动态跟踪
+- 支持对视频的单帧进行处理
+- 单车运行状态参数动态监视
+- 可视化展示单车转角以及车身倾角
+
+![11](./pic/界面二.gif)
+
+
+
+### 一些学习链接
+
+  [第十五届全国大学生智能汽车竞赛-双车组三轮图像处理总结_LeviKing98的博客-CSDN博客](https://blog.csdn.net/LeviKing98/article/details/107902795?spm=1001.2014.3001.5501)  
+
+  [种子填充赛道算法【智能车】_钱钱、的博客-CSDN博客_八领域 智能车](https://blog.csdn.net/weixin_43981425/article/details/107679694)  
+
+  [第十六届智能车比赛 - 全向组图像处理 - 程序解析_Lovely_him的博客-CSDN博客](https://blog.csdn.net/Lovely_him/article/details/119255431?spm=1001.2101.3001.6650.6&utm_medium=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromBaidu%7ERate-6.pc_relevant_paycolumn_v3&depth_1-utm_source=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromBaidu%7ERate-6.pc_relevant_paycolumn_v3&utm_relevant_index=13)  
+
+  [智能车图像处理之透视变换_小陈敲代码的博客-CSDN博客_智能车图像处理](https://blog.csdn.net/qq_43568457/article/details/108549331?utm_medium=distribute.pc_relevant.none-task-blog-2~default~baidujs_baidulandingword~default-5.pc_relevant_paycolumn_v3&spm=1001.2101.3001.4242.4&utm_relevant_index=8)  
+
+
+
+### 下一步目标
+
+学习八邻域生长算法、学习透视变换算法、提高对单帧图像的处理速度、提高对赛道元素识别的稳定性
+
+
+
+## 一些资料
+
+
+
 ## 单车平衡与转向控制
 
 ### 单车平衡原理
