@@ -1,0 +1,23 @@
+LIBRARY "dll.dll"
+EXPORTS
+add
+Image_process
+get_mid
+clear_point
+Get_angle
+edge_point_ornot
+black_
+white_
+get_binImage
+GetOSTUThreshold
+average_value
+average_filter
+get_deal_image
+img_extract
+control
+GetOSTU
+Get_01_Value
+SobelThreshold
+SobelAutoThreshold
+XLW_otsuThreshold
+git_gui_value
