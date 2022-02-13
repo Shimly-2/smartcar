@@ -1,2 +1,23 @@
-﻿    正在创建库 C:\Users\17628\Desktop\ui\dll\x64\Debug\dll.lib 和对象 C:\Users\17628\Desktop\ui\dll\x64\Debug\dll.exp
+﻿  imageprocess.cpp
+C:\Users\17628\Desktop\ui\dll\imageprocess.cpp(102,1): warning C4305:  “初始化”: 从“double”到“float”截断
+C:\Users\17628\Desktop\ui\dll\imageprocess.cpp(140,1): warning C4305:  “初始化”: 从“double”到“float”截断
+C:\Users\17628\Desktop\ui\dll\imageprocess.cpp(145,1): warning C4326:  “main”的返回类型应为“int”而非“void”
+C:\Users\17628\Desktop\ui\dll\imageprocess.cpp(220,54): warning C4244:  “=”: 从“double”转换到“float”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll\imageprocess.cpp(221,54): warning C4244:  “=”: 从“double”转换到“float”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll\imageprocess.cpp(228,50): warning C4244:  “=”: 从“double”转换到“float”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll\imageprocess.cpp(229,74): warning C4244:  “=”: 从“double”转换到“float”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll\imageprocess.cpp(236,50): warning C4244:  “=”: 从“double”转换到“float”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll\imageprocess.cpp(237,74): warning C4244:  “=”: 从“double”转换到“float”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll\imageprocess.cpp(666,7): warning C4101:  “txt”: 未引用的局部变量
+C:\Users\17628\Desktop\ui\dll\imageprocess.cpp(827,10): warning C4244:  “return”: 从“int16”转换到“uint8”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll\imageprocess.cpp(831,10): warning C4244:  “return”: 从“int16”转换到“uint8”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll\imageprocess.cpp(859,16): warning C4244:  “=”: 从“uint16”转换到“uint8”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll\imageprocess.cpp(1697,18): warning C4305:  “=”: 从“double”到“float”截断
+C:\Users\17628\Desktop\ui\dll\imageprocess.cpp(1835,26): warning C4244:  “=”: 从“float”转换到“uint8”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll\imageprocess.cpp(1840,26): warning C4244:  “=”: 从“float”转换到“uint8”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll\imageprocess.cpp(1845,27): warning C4244:  “=”: 从“float”转换到“uint8”，可能丢失数据
+  stdafx.cpp
+  正在生成代码...
+C:\Users\17628\Desktop\ui\dll\imageprocess.cpp(1880,11): warning C4244:  “=”: 从“int16”转换到“uint8”，可能丢失数据
+    正在创建库 C:\Users\17628\Desktop\ui\dll\x64\Debug\dll.lib 和对象 C:\Users\17628\Desktop\ui\dll\x64\Debug\dll.exp
   dll.vcxproj -> C:\Users\17628\Desktop\ui\dll\x64\Debug\dll.dll
