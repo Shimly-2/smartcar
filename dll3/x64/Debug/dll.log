@@ -1,0 +1,21 @@
+﻿  imageprocess.cpp
+C:\Users\17628\Desktop\ui\dll3\imageprocess.cpp(439,9): warning C4244:  “初始化”: 从“float”转换到“int”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll3\imageprocess.cpp(439,43): warning C4244:  “初始化”: 从“float”转换到“int”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll3\imageprocess.cpp(449,52): warning C4244:  “参数”: 从“float”转换到“int”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll3\imageprocess.cpp(449,40): warning C4244:  “参数”: 从“float”转换到“int”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll3\imageprocess.cpp(451,9): warning C4244:  “初始化”: 从“float”转换到“int”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll3\imageprocess.cpp(451,43): warning C4244:  “初始化”: 从“float”转换到“int”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll3\imageprocess.cpp(456,12): warning C4018:  “<”: 有符号/无符号不匹配
+C:\Users\17628\Desktop\ui\dll3\imageprocess.cpp(459,53): warning C4244:  “参数”: 从“float”转换到“int”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll3\imageprocess.cpp(459,41): warning C4244:  “参数”: 从“float”转换到“int”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll3\imageprocess.cpp(514,112): warning C4244:  “参数”: 从“double”转换到“float”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll3\imageprocess.cpp(516,113): warning C4244:  “参数”: 从“double”转换到“float”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll3\imageprocess.cpp(645,1): warning C4305:  “初始化”: 从“double”到“float”截断
+C:\Users\17628\Desktop\ui\dll3\imageprocess.cpp(725,54): warning C4244:  “=”: 从“double”转换到“float”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll3\imageprocess.cpp(726,54): warning C4244:  “=”: 从“double”转换到“float”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll3\imageprocess.cpp(733,50): warning C4244:  “=”: 从“double”转换到“float”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll3\imageprocess.cpp(734,74): warning C4244:  “=”: 从“double”转换到“float”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll3\imageprocess.cpp(741,50): warning C4244:  “=”: 从“double”转换到“float”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll3\imageprocess.cpp(742,74): warning C4244:  “=”: 从“double”转换到“float”，可能丢失数据
+C:\Users\17628\Desktop\ui\dll3\imageprocess.cpp(1171,7): warning C4101:  “txt”: 未引用的局部变量
+  dll.vcxproj -> C:\Users\17628\Desktop\ui\dll3\x64\Debug\dll.dll
